@@ -1,23 +1,40 @@
 #!/usr/bin/env bash
-# Install Fireraven Windsurf hooks from a local clone (development).
-
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)"
 
-# shellcheck source=scripts/lib.sh
-. "${REPO_ROOT}/scripts/lib.sh"
+# shellcheck source=lib.sh
+. "${SCRIPT_DIR}/lib.sh"
 
-main() {
-    info "Installing Fireraven Windsurf FireGuard hooks (local)"
-    info "Source: ${REPO_ROOT}/hooks"
-    info "Install directory: ${FIRERAVEN_INSTALL_DIR}"
+agent="${FIRERAVEN_AGENT:-windsurf}"
 
-    check_python3
-    copy_hook_files_from_dir "${REPO_ROOT}/hooks"
-    finalize_install
-    fireraven_install_complete_message
-}
+info "Installing from local repo: ${REPO_ROOT}"
+check_python3
 
-main "$@"
+case "$agent" in
+    all)
+        copy_package_tree "$REPO_ROOT" "$(windsurf_hooks_dir)"
+        mkdir -p "$(cursor_hooks_dir)" "$(claude_hooks_dir)"
+        copy_package_tree "$REPO_ROOT" "$(cursor_hooks_dir)"
+        copy_package_tree "$REPO_ROOT" "$(claude_hooks_dir)"
+        install_all_agents
+        ;;
+    windsurf)
+        copy_package_tree "$REPO_ROOT" "$(windsurf_hooks_dir)"
+        install_windsurf
+        ;;
+    cursor)
+        copy_package_tree "$REPO_ROOT" "$(cursor_hooks_dir)"
+        install_cursor
+        ;;
+    claude)
+        copy_package_tree "$REPO_ROOT" "$(claude_hooks_dir)"
+        install_claude
+        ;;
+    *)
+        error "Unknown agent: $agent"
+        ;;
+esac
+
+fireraven_install_complete_message

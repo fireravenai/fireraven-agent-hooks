@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Backward-compatible alias for windsurf_guardrail.py (pre_user_prompt only in v1)."""
 from _bootstrap import setup_path
 
 setup_path()

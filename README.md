@@ -1,89 +1,120 @@
-# windsurf-fireguard-hooks
+# Fireraven Agent Hooks
 
-Fireraven [FireGuard](https://doc.fireraven.ai/) input guardrails for [Windsurf Cascade](https://docs.devin.ai/desktop/cascade/hooks). A `pre_user_prompt` hook checks every user message against your FireGuard project before Cascade runs.
+FireGuard guardrails for AI coding agents: **Windsurf/Devin**, **Cursor**, **Claude Code**, and **Microsoft Copilot**.
+
+Block secret leakage, dangerous execution, and data poisoning at the hook layer — before prompts, shell commands, MCP calls, and file writes reach your agent.
 
 ## Quick install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fireravenai/windsurf-fireguard-hooks/refs/heads/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/fireravenai/fireraven-agent-hooks/refs/heads/main/install.sh | sh
 ```
 
-Pin a branch or tag:
+Install all supported local agents:
 
 ```bash
-FIRERAVEN_HOOKS_REF=v1.0.0 curl -fsSL https://raw.githubusercontent.com/fireravenai/windsurf-fireguard-hooks/refs/heads/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/fireravenai/fireraven-agent-hooks/refs/heads/main/install.sh | sh -s -- --agent all
 ```
 
-## Prerequisites
+Or use the CLI from a clone:
 
-- **curl** — used by the remote installer
-- **python3** — on your PATH; the hook runs as `python3 …/fireraven_input_guardrail.py`
-- A FireGuard project with input policies and/or security guardrails
-- FireGuard **API key** and **project ID** (Project Settings in the Fireraven app)
+```bash
+./fg install --agent windsurf
+./fg init
+./fg doctor
+```
+
+## Value proposition
+
+| Threat | Coverage |
+|--------|----------|
+| Secret leakage | User prompts, file reads, MCP args, shell commands |
+| Bad execution | `pre_run_command` / `beforeShellExecution` / tool gates |
+| Data poisoning | `pre_write_code`, output audit on responses |
+
+## Supported agents
+
+| Agent | Install | Hook config | Blocking |
+|-------|---------|-------------|----------|
+| Windsurf / Devin | `--agent windsurf` | `~/.codeium/windsurf/hooks.json` | pre-hooks (exit 2) |
+| Cursor | `--agent cursor` | `~/.cursor/hooks.json` | JSON `permission: deny` |
+| Claude Code | `--agent claude` | `~/.claude/settings.json` | PreToolUse (exit 2) |
+| Copilot | See [adapters/copilot/README.md](adapters/copilot/README.md) | Studio connector topics | Flow conditions |
+
+## Hook events by platform
+
+### Windsurf / Devin
+
+**Input (blocking):** `pre_user_prompt`, `pre_run_command`, `pre_mcp_tool_use`, `pre_write_code`, `pre_read_code`
+
+**Output (audit only):** `post_cascade_response`, `post_write_code`
+
+### Cursor
+
+**Input (blocking):** `beforeSubmitPrompt`, `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile`
+
+Denies via JSON `{"permission": "deny"}` rather than exit codes.
+
+### Claude Code
+
+**Input (blocking):** `PreToolUse` (matcher `.*` — all tools)
+
+Denies via exit code 2.
+
+### Microsoft Copilot
+
+No local shell hooks. FireGuard runs in **Copilot Studio** topic flows:
+
+| Topic | Purpose |
+|-------|---------|
+| `topics/01_input_guardrail.yaml` | Input guardrails — block unsafe prompts |
+| `topics/02_output_guardrail.yaml` | Output guardrails — audit/block assistant responses |
+
+See [adapters/copilot/README.md](adapters/copilot/README.md) for connector setup.
 
 ## Post-install
 
-1. Open `~/.codeium/windsurf/hooks/config.env` and set:
+Edit `config.env` in each agent's hooks directory:
 
-   ```env
-   FIRERAVEN_GUARDRAILS_API_KEY=<your-api-key>
-   FIRERAVEN_PROJECT_ID=<your-project-id>
-   ```
+```env
+FIRERAVEN_GUARDRAILS_API_KEY=<your-api-key>
+FIRERAVEN_PROJECT_ID=<your-project-id>
+```
 
-2. **Restart Windsurf** so `~/.codeium/windsurf/hooks.json` is reloaded.
+Restart your IDE(s).
 
-Hook files are installed under `~/.codeium/windsurf/hooks/`. See [hooks/README.md](hooks/README.md) for behavior, testing, and configuration details.
-
-## Environment variables (install)
+## Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FIRERAVEN_INSTALL_DIR` | `$HOME/.codeium/windsurf` | Windsurf config directory |
-| `FIRERAVEN_HOOKS_REPO` | `fireravenai/windsurf-fireguard-hooks` | GitHub repository |
-| `FIRERAVEN_HOOKS_REF` | `main` | Branch or tag for raw downloads |
+| `FIRERAVEN_HOOKS_REPO` | `fireravenai/fireraven-agent-hooks` | GitHub repo |
+| `FIRERAVEN_HOOKS_REF` | `main` | Branch or tag |
+| `FIRERAVEN_AGENT` | `windsurf` | Agent for install |
+| `FIRERAVEN_FAIL_MODE` | `closed` | `closed` or `open` on API errors |
 
 ## Local development
 
-Clone this repo and install from your working tree:
-
 ```bash
-./scripts/install-local.sh
-```
-
-Use a separate install root for smoke tests:
-
-```bash
-FIRERAVEN_INSTALL_DIR=/tmp/fireraven-hooks-test ./scripts/install-local.sh
+FIRERAVEN_INSTALL_DIR=/tmp/fg-test ./scripts/install-local.sh
+FIRERAVEN_AGENT=all FIRERAVEN_INSTALL_DIR=/tmp/fg-test ./scripts/install-local.sh
 ```
 
 ## Uninstall
 
-From a clone of this repository:
-
 ```bash
-./uninstall.sh
+./uninstall.sh --agent all
+# or
+./fg uninstall --agent windsurf
 ```
 
-This removes the hook entry from `hooks.json`, deletes shipped hook files under `hooks/`, and leaves `config.env` in place (it may contain secrets). Restart Windsurf after uninstalling.
+## Publishing
 
-Remote uninstall:
+1. Push to `fireravenai/fireraven-agent-hooks` on `main`
+2. Tag `v1.0.0` after verifying install
+3. Cross-link from [Fireraven docs](https://doc.fireraven.ai/)
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fireravenai/windsurf-fireguard-hooks/refs/heads/main/uninstall.sh | sh
-```
+## Documentation
 
-## Publishing checklist
-
-Before tagging or announcing a release on `main`:
-
-- [ ] `hooks/fireraven_input_guardrail.py` is executable and Python 3 stdlib only
-- [ ] `hooks/config.example.env` documents all supported variables
-- [ ] `hooks/README.md` matches install paths and testing steps
-- [ ] `install.sh` downloads `scripts/lib.sh` and all files in `HOOK_FILES` from `lib.sh`
-- [ ] Run `FIRERAVEN_INSTALL_DIR=/tmp/fireraven-hooks-test ./scripts/install-local.sh` and verify `hooks.json` + hook files
-- [ ] Confirm curl one-liner works against the published `main` branch (after push)
-- [ ] Do not commit `hooks/config.env` or real API keys
-
-## License
-
-See repository defaults; hook script is intended for use with Fireraven FireGuard accounts.
+- [hooks/README.md](hooks/README.md) — hook details and manual testing
+- [Cascade Hooks](https://docs.devin.ai/desktop/cascade/hooks)
+- [FireGuard API](https://doc.fireraven.ai/)

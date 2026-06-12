@@ -1,0 +1,41 @@
+kind: AdaptiveDialog
+description: Run output guardrails after assistant response (audit; blocking handled in Copilot flow conditions).
+beginDialog:
+  kind: OnActivity
+  id: main
+  type: Message
+  actions:
+    - kind: ConditionGroup
+      id: hasInputId
+      conditions:
+        - id: inputPresent
+          condition: =Not(IsBlank(Global.fireraven_input_id))
+          actions:
+            - kind: InvokeConnectorAction
+              id: outputGuardrails
+              input:
+                binding:
+                  conversation_id: =Text(ParseJSON(Topic.createConversationCopilot).id)
+                  input_id: =Global.fireraven_input_id
+                  output: =System.Activity.Text
+              output:
+                kind: SingleVariableOutputBinding
+                variable: Topic.outputGuardrails
+              connectionReference: YOUR_FIRERAVEN_CONNECTOR
+              connectionProperties:
+                name: YOUR_CONNECTION
+                mode: Invoker
+              operationId: outputGuardrails
+
+            - kind: ConditionGroup
+              id: outputUnsafe
+              conditions:
+                - id: unsafeOutput
+                  condition: =Not(ParseJSON(Topic.outputGuardrails).is_safe)
+                  actions:
+                    - kind: SendActivity
+                      id: outputViolation
+                      activity: Assistant output flagged by Fireraven FireGuard (audit).
+
+inputType: {}
+outputType: {}

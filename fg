@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib.sh
+. "${SCRIPT_DIR}/scripts/lib.sh"
+
+usage() {
+    cat <<EOF
+Fireraven agent hooks CLI
+
+Usage:
+  fg install [--agent windsurf|cursor|claude|copilot|all]
+  fg init      Interactive config setup for Windsurf hooks
+  fg doctor    Check python3, config, and hook registration
+  fg uninstall [--agent all|windsurf|cursor|claude]
+
+Environment:
+  FIRERAVEN_INSTALL_DIR, FIRERAVEN_CURSOR_INSTALL_DIR, FIRERAVEN_CLAUDE_INSTALL_DIR
+EOF
+}
+
+cmd_install() {
+    agent="${FIRERAVEN_AGENT:-windsurf}"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --agent) agent="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    FIRERAVEN_AGENT="$agent" "${SCRIPT_DIR}/scripts/install-local.sh"
+}
+
+cmd_init() {
+    dest="$(windsurf_hooks_dir)"
+    mkdir -p "$dest"
+    if [ ! -f "${dest}/config.example.env" ]; then
+        cp "${SCRIPT_DIR}/hooks/config.example.env" "${dest}/config.example.env"
+    fi
+    setup_config_env "$dest"
+    read -r -p "FIRERAVEN_GUARDRAILS_API_KEY: " api_key
+    read -r -p "FIRERAVEN_PROJECT_ID: " project_id
+    cat > "${dest}/config.env" <<EOF
+FIRERAVEN_GUARDRAILS_API_KEY=${api_key}
+FIRERAVEN_PROJECT_ID=${project_id}
+EOF
+    chmod 600 "${dest}/config.env"
+    info "Wrote ${dest}/config.env"
+    read -r -p "Install Windsurf hooks now? [Y/n] " yn
+    case "${yn:-Y}" in
+        y|Y|yes|Yes) FIRERAVEN_AGENT=windsurf "${SCRIPT_DIR}/scripts/install-local.sh" ;;
+    esac
+}
+
+cmd_doctor() {
+    check_python3
+    ok=0
+    for label_dir in "Windsurf:$(windsurf_hooks_dir)" "Cursor:$(cursor_hooks_dir)" "Claude:$(claude_hooks_dir)"; do
+        label="${label_dir%%:*}"
+        dir="${label_dir#*:}"
+        echo "--- ${label} (${dir}) ---"
+        if [ -f "${dir}/config.env" ]; then
+            info "config.env present"
+        else
+            warn "config.env missing"
+            ok=1
+        fi
+        if [ -f "${dir}/windsurf_guardrail.py" ]; then
+            info "hook scripts present"
+        else
+            warn "hook scripts not installed"
+            ok=1
+        fi
+    done
+    [ "$ok" -eq 0 ] && info "doctor: OK" || warn "doctor: issues found"
+}
+
+cmd_uninstall() {
+    agent="all"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --agent) agent="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    remove_agent_hooks "$agent"
+}
+
+main() {
+    cmd="${1:-}"
+    shift || true
+    case "$cmd" in
+        install) cmd_install "$@" ;;
+        init) cmd_init "$@" ;;
+        doctor) cmd_doctor "$@" ;;
+        uninstall) cmd_uninstall "$@" ;;
+        -h|--help|help|"") usage ;;
+        *) error "Unknown command: $cmd" ;;
+    esac
+}
+
+main "$@"

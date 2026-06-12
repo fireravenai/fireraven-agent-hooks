@@ -1,4 +1,6 @@
 hooks/config.env
+**/config.env
+state/
 __pycache__/
 *.pyc
 .DS_Store

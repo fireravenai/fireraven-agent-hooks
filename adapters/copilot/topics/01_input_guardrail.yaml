@@ -1,0 +1,59 @@
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnActivity
+  id: main
+  type: Message
+  actions:
+    - kind: InvokeConnectorAction
+      id: createConversationCopilot
+      input:
+        binding:
+          conversation_copilot_id: =System.Conversation.Id
+          description: Fireraven agent hooks session
+          name: Copilot session
+          project_id: YOUR_FIRERAVEN_PROJECT_ID
+      output:
+        kind: SingleVariableOutputBinding
+        variable: Topic.createConversationCopilot
+      connectionReference: YOUR_FIRERAVEN_CONNECTOR
+      connectionProperties:
+        name: YOUR_CONNECTION
+        mode: Invoker
+      operationId: createConversationCopilot
+
+    - kind: InvokeConnectorAction
+      id: inputGuardrails
+      input:
+        binding:
+          conversation_id: =Text(ParseJSON(Topic.createConversationCopilot).id)
+          guardrails: "=[{type: \"policies_guardrail\"},{type: \"security_guardrail\"}]"
+          messages_history: "=Table({ role: \"user\", content: System.LastMessage.Text})"
+      output:
+        kind: SingleVariableOutputBinding
+        variable: Topic.inputGuardrails
+      connectionReference: YOUR_FIRERAVEN_CONNECTOR
+      connectionProperties:
+        name: YOUR_CONNECTION
+        mode: Invoker
+      operationId: inputGuardrails
+
+    - kind: ParseValue
+      id: storeInputId
+      variable: Global.fireraven_input_id
+      valueType: String
+      value: =Text(ParseJSON(Topic.inputGuardrails).input_request.id)
+
+    - kind: ConditionGroup
+      id: blockUnsafe
+      conditions:
+        - id: unsafe
+          condition: =Not(ParseJSON(Topic.inputGuardrails).is_safe)
+          actions:
+            - kind: SendActivity
+              id: blockedMessage
+              activity: Blocked by Fireraven FireGuard responsible AI policies.
+            - kind: CancelAllDialogs
+              id: cancel
+
+inputType: {}
+outputType: {}

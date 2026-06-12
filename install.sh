@@ -1,46 +1,69 @@
 #!/usr/bin/env sh
-# Fireraven Windsurf FireGuard hooks installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/fireravenai/windsurf-fireguard-hooks/refs/heads/main/install.sh | sh
+# Fireraven agent hooks installer
+# Usage: curl -fsSL https://raw.githubusercontent.com/fireravenai/fireraven-agent-hooks/refs/heads/main/install.sh | sh
+#        curl ... | sh -s -- --agent all
 
 set -e
 
-FIRERAVEN_HOOKS_REPO="${FIRERAVEN_HOOKS_REPO:-fireravenai/windsurf-fireguard-hooks}"
+FIRERAVEN_HOOKS_REPO="${FIRERAVEN_HOOKS_REPO:-fireravenai/fireraven-agent-hooks}"
 FIRERAVEN_HOOKS_REF="${FIRERAVEN_HOOKS_REF:-main}"
-FIRERAVEN_INSTALL_DIR="${FIRERAVEN_INSTALL_DIR:-$HOME/.codeium/windsurf}"
+FIRERAVEN_AGENT="${FIRERAVEN_AGENT:-windsurf}"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --agent)
+            FIRERAVEN_AGENT="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
 
 TEMP_DIR=""
 cleanup() {
-    if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
-        rm -rf "$TEMP_DIR"
-    fi
+    [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ] && rm -rf "$TEMP_DIR"
 }
 trap cleanup EXIT
 
-if ! command -v curl >/dev/null 2>&1; then
-    printf '\033[0;31m[ERROR]\033[0m curl is required but was not found on PATH\n'
-    exit 1
-fi
+command -v curl >/dev/null 2>&1 || { printf '[ERROR] curl required\n'; exit 1; }
 
 TEMP_DIR="$(mktemp -d)"
 RAW_BASE="https://raw.githubusercontent.com/${FIRERAVEN_HOOKS_REPO}/refs/heads/${FIRERAVEN_HOOKS_REF}"
 
-if ! curl -fsSL "${RAW_BASE}/scripts/lib.sh" -o "${TEMP_DIR}/lib.sh"; then
-    printf '\033[0;31m[ERROR]\033[0m Failed to download install library from %s\n' "$RAW_BASE/scripts/lib.sh"
-    exit 1
-fi
-
+curl -fsSL "${RAW_BASE}/scripts/lib.sh" -o "${TEMP_DIR}/lib.sh" || exit 1
 # shellcheck source=/dev/null
 . "${TEMP_DIR}/lib.sh"
 
-main() {
-    info "Installing Fireraven Windsurf FireGuard hooks"
-    info "Repository: ${FIRERAVEN_HOOKS_REPO} (${FIRERAVEN_HOOKS_REF})"
-    info "Install directory: ${FIRERAVEN_INSTALL_DIR}"
+info "Installing Fireraven agent hooks (${FIRERAVEN_AGENT})"
+check_python3
 
-    check_python3
-    download_hook_files "$RAW_BASE"
-    finalize_install
-    fireraven_install_complete_message
-}
+case "$FIRERAVEN_AGENT" in
+    all)
+        download_package_tree "$RAW_BASE" "$(windsurf_hooks_dir)"
+        download_package_tree "$RAW_BASE" "$(cursor_hooks_dir)"
+        download_package_tree "$RAW_BASE" "$(claude_hooks_dir)"
+        install_all_agents
+        ;;
+    windsurf)
+        download_package_tree "$RAW_BASE" "$(windsurf_hooks_dir)"
+        install_windsurf
+        ;;
+    cursor)
+        download_package_tree "$RAW_BASE" "$(cursor_hooks_dir)"
+        install_cursor
+        ;;
+    claude)
+        download_package_tree "$RAW_BASE" "$(claude_hooks_dir)"
+        install_claude
+        ;;
+    copilot)
+        info "See adapters/copilot/ in the repository for Copilot Studio topics"
+        ;;
+    *)
+        error "Unknown --agent value: $FIRERAVEN_AGENT (use windsurf, cursor, claude, copilot, all)"
+        ;;
+esac
 
-main
+fireraven_install_complete_message
