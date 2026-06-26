@@ -1,7 +1,7 @@
 # Fireraven Agent Hooks
 
 <p align="center">
-  <img src="assets/fireraven-agent-hooks-hero.svg" alt="Fireraven Agent Hooks: FireGuard guardrails for AI coding agents" width="100%" />
+  <img src="assets/fireraven-agent-hooks-hero.png" alt="Fireraven Agent Hooks: FireGuard guardrails for AI coding agents" width="100%" />
 </p>
 
 <p align="center">
