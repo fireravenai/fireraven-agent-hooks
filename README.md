@@ -16,6 +16,16 @@ FireGuard guardrails for AI coding agents: **Windsurf/Devin**, **Cursor**, **Cla
 
 Block secret leakage, dangerous execution, and data poisoning at the hook layer — before prompts, shell commands, MCP calls, and file writes reach your agent.
 
+```mermaid
+flowchart LR
+    userAction["Prompt, command, MCP call, or file access"] --> agentHook["Agent hook"]
+    agentHook --> localContext["Normalize event context"]
+    localContext --> fireguard["FireGuard policy check"]
+    fireguard --> decision{"Safe?"}
+    decision -->|Yes| allow["Allow agent action"]
+    decision -->|No| block["Block with guardrail message"]
+```
+
 ## Quick install for macOS, Linux, and WSL
 
 ```bash
