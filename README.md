@@ -1,5 +1,17 @@
 # Fireraven Agent Hooks
 
+<p align="center">
+  <img src="assets/fireraven-agent-hooks-hero.svg" alt="Fireraven Agent Hooks: FireGuard guardrails for AI coding agents" width="100%" />
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-15A0FD?style=for-the-badge" /></a>
+  <img alt="Cursor" src="https://img.shields.io/badge/Cursor-guarded-111111?style=for-the-badge&logo=cursor&logoColor=white" />
+  <img alt="Windsurf" src="https://img.shields.io/badge/Windsurf%20%2F%20Devin-guarded-0B100F?style=for-the-badge&logo=windsurf&logoColor=white" />
+  <img alt="Claude Code" src="https://img.shields.io/badge/Claude%20Code-guarded-D97706?style=for-the-badge&logo=claude&logoColor=white" />
+  <img alt="GitHub Copilot" src="https://img.shields.io/badge/GitHub%20Copilot-guarded-24292F?style=for-the-badge&logo=githubcopilot&logoColor=white" />
+</p>
+
 FireGuard guardrails for AI coding agents: **Windsurf/Devin**, **Cursor**, **Claude Code**, and **Microsoft Copilot**.
 
 Block secret leakage, dangerous execution, and data poisoning at the hook layer — before prompts, shell commands, MCP calls, and file writes reach your agent.
@@ -199,3 +211,9 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -Agent cursor
 - [hooks/README.md](hooks/README.md) — hook details and manual testing
 - [Cascade Hooks](https://docs.devin.ai/desktop/cascade/hooks)
 - [FireGuard API](https://doc.fireraven.ai/)
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE). Apache-2.0 is a permissive open-source license suitable for distributing these hooks while allowing use alongside private Fireraven deployments and private codebases.
+
+Third-party agent names and logos are trademarks of their respective owners and are used here only to identify supported integrations.
