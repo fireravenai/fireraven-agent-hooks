@@ -14,7 +14,7 @@ $ClaudeScript = "claude_guardrail.py"
 $WindsurfPreEvents = @("pre_user_prompt", "pre_run_command", "pre_mcp_tool_use", "pre_write_code", "pre_read_code")
 $WindsurfPostEvents = @("post_cascade_response", "post_write_code")
 $CursorEvents = @("beforeSubmitPrompt", "beforeShellExecution", "beforeMCPExecution", "beforeReadFile")
-$FireravenEntryPattern = "fireraven|windsurf_guardrail\.py|cursor_guardrail\.py|claude_guardrail\.py|fireraven_input_guardrail\.py"
+$FireravenEntryPattern = "fireraven|windsurf_guardrail\.py|cursor_guardrail\.py|run_cursor_guardrail\.ps1|claude_guardrail\.py|fireraven_input_guardrail\.py"
 
 function Write-Info {
     param([string]$Message)
@@ -109,10 +109,28 @@ function New-PythonInvocation {
     return "`$input | & " + ($parts -join " ")
 }
 
+function New-PowerShellPythonCommand {
+    param(
+        [hashtable]$PythonCommand,
+        [string]$ScriptPath
+    )
+
+    $parts = @((Quote-PowerShellArgument $PythonCommand.FilePath))
+    foreach ($arg in $PythonCommand.Arguments) {
+        $parts += (Quote-PowerShellArgument $arg)
+    }
+    $parts += (Quote-PowerShellArgument $ScriptPath)
+    return "& " + ($parts -join " ")
+}
+
 function New-CursorHookCommand {
     param([string]$PythonInvocation)
     $escaped = $PythonInvocation -replace '"', '\"'
     return "powershell -NoProfile -ExecutionPolicy Bypass -Command `"$escaped`""
+}
+
+function New-CursorDirectHookCommand {
+    return "py -3 hooks/cursor_guardrail.py"
 }
 
 function New-PortablePythonCommand {
@@ -145,7 +163,7 @@ function Copy-PackageTree {
         Copy-Item -Recurse -Force (Join-Path $SourceRoot $dir) $DestinationDir
     }
 
-    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "claude_guardrail.py", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
+    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
         $source = Join-Path (Join-Path $SourceRoot "hooks") $file
         if (Test-Path $source) {
             Copy-Item -Force $source (Join-Path $DestinationDir $file)
@@ -186,7 +204,7 @@ function Download-PackageTree {
         Download-File -Url "$RawBase/$path" -Destination (Join-Path $DestinationDir ($path -replace "/", "\"))
     }
 
-    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "claude_guardrail.py", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
+    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
         Download-File -Url "$RawBase/hooks/$file" -Destination (Join-Path $DestinationDir $file)
     }
 }
@@ -308,10 +326,9 @@ function Merge-WindsurfHooksJson {
 
     $hooksJson = Join-Path (Get-WindsurfInstallDir) "hooks.json"
     $scriptPath = Join-Path (Get-WindsurfHooksDir) $WindsurfScript
-    $pythonInvocation = New-PythonInvocation -PythonCommand $PythonCommand -ScriptPath $scriptPath
     $entry = @{
         command = New-PortablePythonCommand -ScriptPath $scriptPath
-        powershell = $pythonInvocation
+        powershell = New-PowerShellPythonCommand -PythonCommand $PythonCommand -ScriptPath $scriptPath
     }
 
     $data = Read-JsonFile -Path $hooksJson
@@ -333,10 +350,8 @@ function Merge-CursorHooksJson {
     )
 
     $hooksJson = Join-Path (Get-CursorInstallDir) "hooks.json"
-    $scriptPath = Join-Path (Get-CursorHooksDir) $CursorScript
-    $pythonInvocation = New-PythonInvocation -PythonCommand $PythonCommand -ScriptPath $scriptPath
     $entry = @{
-        command = New-CursorHookCommand -PythonInvocation $pythonInvocation
+        command = New-CursorDirectHookCommand
     }
 
     $data = Read-JsonFile -Path $hooksJson -DefaultValue @{ version = 1; hooks = @{} }

@@ -13,6 +13,7 @@ WINDSURF_SCRIPT="windsurf_guardrail.py"
 CURSOR_SCRIPT="cursor_guardrail.py"
 CLAUDE_SCRIPT="claude_guardrail.py"
 MARKER="fireraven"
+FIRERAVEN_ENTRY_PATTERN="fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py"
 
 WINDSURF_PRE_EVENTS="pre_user_prompt pre_run_command pre_mcp_tool_use pre_write_code pre_read_code"
 WINDSURF_POST_EVENTS="post_cascade_response post_write_code"
@@ -59,7 +60,7 @@ copy_package_tree() {
     rm -rf "${dest_dir}/core" "${dest_dir}/adapters"
     cp -R "${src_root}/core" "${src_root}/adapters" "${dest_dir}/"
 
-    for file in windsurf_guardrail.py cursor_guardrail.py claude_guardrail.py \
+    for file in windsurf_guardrail.py cursor_guardrail.py run_cursor_guardrail.ps1 claude_guardrail.py \
         fireraven_input_guardrail.py _bootstrap.py config.example.env README.md; do
         if [ -f "${src_root}/hooks/${file}" ]; then
             cp "${src_root}/hooks/${file}" "${dest_dir}/${file}"
@@ -84,7 +85,7 @@ download_package_tree() {
         curl -fsSL "$url" -o "${dest_dir}/${path}" || error "Failed to download $url"
     done
 
-    for file in _bootstrap.py windsurf_guardrail.py cursor_guardrail.py claude_guardrail.py \
+    for file in _bootstrap.py windsurf_guardrail.py cursor_guardrail.py run_cursor_guardrail.ps1 claude_guardrail.py \
         fireraven_input_guardrail.py config.example.env README.md; do
         url="${raw_base}/hooks/${file}"
         info "Downloading hooks/${file}"
@@ -97,10 +98,10 @@ merge_windsurf_hooks_json() {
     hooks_json="${WINDSURF_INSTALL_DIR}/hooks.json"
     script_path="$(windsurf_hooks_dir)/${WINDSURF_SCRIPT}"
 
-    python3 - "$hooks_json" "$script_path" "$WINDSURF_PRE_EVENTS" "$WINDSURF_POST_EVENTS" <<'PY'
+    python3 - "$hooks_json" "$script_path" "$WINDSURF_PRE_EVENTS" "$WINDSURF_POST_EVENTS" "$FIRERAVEN_ENTRY_PATTERN" <<'PY'
 import json, os, sys
-hooks_json_path, script_path, pre_events, post_events = sys.argv[1:5]
-marker = "fireraven"
+hooks_json_path, script_path, pre_events, post_events, owned_pattern = sys.argv[1:6]
+owned_markers = owned_pattern.split("|")
 entry = {"command": f"python3 {script_path}"}
 
 data = {}
@@ -111,7 +112,9 @@ if os.path.isfile(hooks_json_path) and os.path.getsize(hooks_json_path) > 0:
 hooks = data.setdefault("hooks", {})
 for event in (pre_events + " " + post_events).split():
     entries = hooks.setdefault(event, [])
-    hooks[event] = [e for e in entries if marker not in e.get("command", "")]
+    hooks[event] = [
+        e for e in entries if not any(marker in json.dumps(e) for marker in owned_markers)
+    ]
     hooks[event].append(entry)
 
 os.makedirs(os.path.dirname(hooks_json_path), exist_ok=True)
@@ -125,10 +128,10 @@ merge_cursor_hooks_json() {
     hooks_json="${CURSOR_INSTALL_DIR}/hooks.json"
     script_path="$(cursor_hooks_dir)/${CURSOR_SCRIPT}"
 
-    python3 - "$hooks_json" "$script_path" "$CURSOR_EVENTS" <<'PY'
+    python3 - "$hooks_json" "$script_path" "$CURSOR_EVENTS" "$FIRERAVEN_ENTRY_PATTERN" <<'PY'
 import json, os, sys
-hooks_json_path, script_path, events = sys.argv[1:4]
-marker = "fireraven"
+hooks_json_path, script_path, events, owned_pattern = sys.argv[1:5]
+owned_markers = owned_pattern.split("|")
 entry = {"command": f"python3 {script_path}"}
 
 data = {"version": 1, "hooks": {}}
@@ -140,7 +143,9 @@ hooks = data.setdefault("hooks", {})
 
 for event in events.split():
     entries = hooks.setdefault(event, [])
-    hooks[event] = [e for e in entries if marker not in e.get("command", "")]
+    hooks[event] = [
+        e for e in entries if not any(marker in json.dumps(e) for marker in owned_markers)
+    ]
     hooks[event].append(entry)
 
 os.makedirs(os.path.dirname(hooks_json_path), exist_ok=True)
@@ -222,10 +227,10 @@ install_all_agents() {
 
 remove_agent_hooks() {
     agent="$1"
-    python3 - "$agent" "$WINDSURF_INSTALL_DIR" "$CURSOR_INSTALL_DIR" "$CLAUDE_INSTALL_DIR" <<'PY'
+    python3 - "$agent" "$WINDSURF_INSTALL_DIR" "$CURSOR_INSTALL_DIR" "$CLAUDE_INSTALL_DIR" "$FIRERAVEN_ENTRY_PATTERN" <<'PY'
 import json, os, sys
-agent, ws, cur, claude = sys.argv[1:5]
-marker = "fireraven"
+agent, ws, cur, claude, owned_pattern = sys.argv[1:6]
+owned_markers = owned_pattern.split("|")
 
 def scrub_json(path, events):
     if not os.path.isfile(path):
@@ -236,7 +241,9 @@ def scrub_json(path, events):
     for event in events:
         if event not in hooks:
             continue
-        hooks[event] = [e for e in hooks[event] if marker not in e.get("command", "")]
+        hooks[event] = [
+            e for e in hooks[event] if not any(marker in json.dumps(e) for marker in owned_markers)
+        ]
         if not hooks[event]:
             del hooks[event]
     if not hooks:
@@ -261,7 +268,7 @@ if agent in ("claude", "all"):
             data = json.load(f)
         hooks = data.get("hooks", {})
         pre = hooks.get("PreToolUse", [])
-        pre = [e for e in pre if marker not in json.dumps(e)]
+        pre = [e for e in pre if not any(marker in json.dumps(e) for marker in owned_markers)]
         if pre:
             hooks["PreToolUse"] = pre
         elif "PreToolUse" in hooks:

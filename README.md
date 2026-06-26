@@ -66,7 +66,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Agent windsurf
 | Agent | Install | Hook config | Blocking |
 |-------|---------|-------------|----------|
 | Windsurf / Devin | `--agent windsurf` or `-Agent windsurf` | `~/.codeium/windsurf/hooks.json` | pre-hooks (exit 2) |
-| Cursor | `--agent cursor` or `-Agent cursor` | `~/.cursor/hooks.json` | JSON `permission: deny` |
+| Cursor | `--agent cursor` or `-Agent cursor` | `~/.cursor/hooks.json` | JSON `continue: false` for prompts, `permission: deny` for other hooks |
 | Claude Code | `--agent claude` | `~/.claude/settings.json` | PreToolUse (exit 2) |
 | Copilot | See [adapters/copilot/README.md](adapters/copilot/README.md) | Studio connector topics | Flow conditions |
 
@@ -82,7 +82,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Agent windsurf
 
 **Input (blocking):** `beforeSubmitPrompt`, `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile`
 
-Denies via JSON `{"permission": "deny"}` rather than exit codes.
+Denies via JSON rather than exit codes. `beforeSubmitPrompt` uses `{"continue": false}`; other Cursor events use `{"permission": "deny"}`.
 
 ### Claude Code
 
@@ -113,7 +113,15 @@ The PowerShell installer writes:
 | `%USERPROFILE%\.cursor\hooks\` | Fireraven hook scripts and config |
 | `%USERPROFILE%\.cursor\hooks\config.env` | Fireraven credentials |
 
-The installer registers Cursor hooks with an explicit PowerShell launcher, so Cursor does not depend on Git Bash, WSL, or your default terminal profile. After editing `config.env`, restart Cursor or reload the window, then check **View > Output > Hooks** if a hook does not appear to run.
+The installer registers Cursor hooks as `py -3 hooks/cursor_guardrail.py`, which Cursor runs from `%USERPROFILE%\.cursor`. This lets Cursor pipe hook JSON directly to Python without a PowerShell stdin bridge. After editing `config.env`, restart Cursor or reload the window, then check **View > Output > Hooks** if a hook does not appear to run.
+
+If the Python launcher is not available in Cursor's hook environment, use the installed fallback wrapper in `%USERPROFILE%\.cursor\hooks.json`:
+
+```json
+{
+  "command": "powershell -NoProfile -ExecutionPolicy Bypass -File hooks/run_cursor_guardrail.ps1"
+}
+```
 
 ### Devin/Windsurf on Windows
 
@@ -125,14 +133,14 @@ Devin Desktop uses the Windsurf/Cascade hook configuration format. The PowerShel
 | `%USERPROFILE%\.codeium\windsurf\hooks\` | Fireraven hook scripts and config |
 | `%USERPROFILE%\.codeium\windsurf\hooks\config.env` | Fireraven credentials |
 
-The installer uses Cascade's Windows-specific `powershell` hook field, while keeping the hook registration in the normal Devin/Windsurf user-level config file. Restart Devin Desktop or Windsurf after editing `config.env`.
+The installer uses Cascade's Windows-specific `powershell` hook field, while keeping the hook registration in the normal Devin/Windsurf user-level config file. The adapter still follows Cascade's exit-code blocking behavior. Restart Devin Desktop or Windsurf after editing `config.env`.
 
 ### Windows troubleshooting
 
 - If PowerShell blocks the script, run the local clone command with `-ExecutionPolicy Bypass`.
 - If Python is missing, install Python 3 and enable **Add python.exe to PATH**, or use the Python launcher so `py -3 --version` works.
-- If Cursor hooks do not run, open **View > Output > Hooks** and confirm the command starts with `powershell -NoProfile -ExecutionPolicy Bypass`.
-- If Devin/Windsurf hooks do not run, confirm `%USERPROFILE%\.codeium\windsurf\hooks.json` contains a `powershell` field for each Fireraven hook event.
+- If Cursor hooks do not run, open **View > Output > Hooks** and confirm the command is `py -3 hooks/cursor_guardrail.py`, or switch to the `run_cursor_guardrail.ps1` fallback above.
+- If Devin/Windsurf hooks do not run, confirm `%USERPROFILE%\.codeium\windsurf\hooks.json` contains a direct Python `powershell` field for each Fireraven hook event.
 - If credentials fail, edit the `config.env` file under the installed agent's `hooks` directory and restart the IDE.
 
 ## Post-install
