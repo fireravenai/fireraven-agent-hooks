@@ -22,8 +22,8 @@ flowchart LR
     agentHook --> localContext["Normalize event context"]
     localContext --> fireguard["FireGuard policy check"]
     fireguard --> decision{"Safe?"}
-    decision -->|Yes| allow["Allow agent action"]
-    decision -->|No| block["Block with guardrail message"]
+    decision -->|Yes| allowAction["Allow agent action"]
+    decision -->|No| blockAction["Block with guardrail message"]
 ```
 
 ## Quick install for macOS, Linux, and WSL
