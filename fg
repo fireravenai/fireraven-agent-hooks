@@ -2,6 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+FIRERAVEN_SCRIPTS_DIR="${SCRIPT_DIR}/scripts"
+export FIRERAVEN_SCRIPTS_DIR
 # shellcheck source=scripts/lib.sh
 . "${SCRIPT_DIR}/scripts/lib.sh"
 

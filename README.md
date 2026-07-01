@@ -106,6 +106,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Agent windsurf
 
 Denies via JSON rather than exit codes. `beforeSubmitPrompt` uses `{"continue": false}`; other Cursor events use `{"permission": "deny"}`.
 
+`~/.cursor/hooks.json` may use JSONC (`//` or `/* */` comments). The installer merges Fireraven hook entries with surgical edits so existing comments, indentation, and third-party hooks (for example `preToolUse`) are preserved. Commented-out hook blocks stay commented; the installer adds live Fireraven entries separately.
+
 ### Claude Code
 
 **Input (blocking):** `PreToolUse` (matcher `.*` — all tools)
@@ -164,19 +166,58 @@ The installer uses Cascade's Windows-specific `powershell` hook field, while kee
 - If Cursor hooks do not run, open **View > Output > Hooks** and confirm the command is `py -3 hooks/cursor_guardrail.py`, or switch to the `run_cursor_guardrail.ps1` fallback above.
 - If Devin/Windsurf hooks do not run, confirm `%USERPROFILE%\.codeium\windsurf\hooks.json` contains a direct Python `powershell` field for each Fireraven hook event.
 - If credentials fail, edit the `config.env` file under the installed agent's `hooks` directory and restart the IDE.
+- If install fails with a JSONC parse error on `hooks.json`, fix syntax errors in the file (comments alone are supported). The installer preserves `//` comments and non-Fireraven hook entries.
 
 ## Post-install
 
-Edit `config.env` in each agent's hooks directory:
+Edit `config.env` in each agent's hooks directory (for example `~/.cursor/hooks/config.env`). Restart the IDE after changing it.
+
+**Required:**
 
 ```env
 FIRERAVEN_GUARDRAILS_API_KEY=<your-api-key>
 FIRERAVEN_PROJECT_ID=<your-project-id>
 ```
 
-Restart your IDE(s).
+**Optional:**
 
-## Environment variables
+```env
+FIRERAVEN_API_URL=https://api.fireraven.ai
+FIRERAVEN_EXECUTION_MODE=fast
+FIRERAVEN_REQUEST_TIMEOUT_SEC=15
+FIRERAVEN_FAIL_MODE=closed
+```
+
+### `config.env` reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FIRERAVEN_GUARDRAILS_API_KEY` | *(none)* | FireGuard API key. Required. |
+| `FIRERAVEN_PROJECT_ID` | *(none)* | FireGuard project ID. Required. |
+| `FIRERAVEN_API_URL` | `https://api.fireraven.ai` | FireGuard API base URL. |
+| `FIRERAVEN_EXECUTION_MODE` | `fast` | How each guardrail check runs on the FireGuard API. See below. |
+| `FIRERAVEN_REQUEST_TIMEOUT_SEC` | `15` | HTTP timeout in seconds for FireGuard requests. |
+| `FIRERAVEN_FAIL_MODE` | `closed` | Hook behavior when FireGuard is unreachable. See below. |
+
+#### `FIRERAVEN_EXECUTION_MODE`
+
+| Value | When to use |
+|-------|-------------|
+| `fast` | **Default.** Lower latency for IDE hooks. FireGuard runs eligible checks in parallel and returns as soon as a blocking result is known. |
+| `normal` | Stricter, higher-latency checks. FireGuard runs guardrails sequentially and returns full policy and security details. |
+
+This value is sent as `execution_mode` on each input and output guardrail API call. It can differ from your project's default execution mode in the Fireraven app.
+
+#### `FIRERAVEN_FAIL_MODE`
+
+| Value | When to use |
+|-------|-------------|
+| `closed` | **Default.** Block the agent action when the hook cannot reach FireGuard (network error, timeout, HTTP error). Use for production enforcement. |
+| `open` | Allow the agent action through on transient FireGuard API failures. Policy violations and missing `FIRERAVEN_*` credentials still block. |
+
+Restart your IDE(s) after editing `config.env`.
+
+## Installer environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -186,13 +227,15 @@ Restart your IDE(s).
 | `FIRERAVEN_INSTALL_DIR` | `~/.codeium/windsurf` | Windsurf/Devin install dir |
 | `FIRERAVEN_CURSOR_INSTALL_DIR` | `~/.cursor` | Cursor install dir |
 | `FIRERAVEN_CLAUDE_INSTALL_DIR` | `~/.claude` | Claude Code install dir |
-| `FIRERAVEN_FAIL_MODE` | `closed` | `closed` or `open` on API errors |
+
+Hook runtime settings (`FIRERAVEN_GUARDRAILS_API_KEY`, `FIRERAVEN_EXECUTION_MODE`, `FIRERAVEN_FAIL_MODE`, and so on) belong in each agent's `hooks/config.env` file, not in the shell environment. See [Post-install](#post-install).
 
 ## Local development
 
 ```bash
 FIRERAVEN_INSTALL_DIR=/tmp/fg-test ./scripts/install-local.sh
 FIRERAVEN_AGENT=all FIRERAVEN_INSTALL_DIR=/tmp/fg-test ./scripts/install-local.sh
+uv run python -m unittest tests.test_merge_hooks_config -v
 ```
 
 ## Uninstall

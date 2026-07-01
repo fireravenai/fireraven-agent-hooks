@@ -33,6 +33,30 @@ check_python3() {
     command -v python3 >/dev/null 2>&1 || error "python3 is required but was not found on PATH"
 }
 
+merge_hooks_scripts_dir() {
+    if [ -n "${FIRERAVEN_SCRIPTS_DIR:-}" ] && [ -f "${FIRERAVEN_SCRIPTS_DIR}/merge_hooks_config.py" ]; then
+        printf '%s' "$FIRERAVEN_SCRIPTS_DIR"
+        return 0
+    fi
+    error "Missing merge_hooks_config.py (set FIRERAVEN_SCRIPTS_DIR)"
+}
+
+download_merge_scripts() {
+    raw_base="$1"
+    dest_dir="$2"
+    mkdir -p "$dest_dir"
+    for file in jsonc_modify.py merge_hooks_config.py; do
+        url="${raw_base}/scripts/${file}"
+        info "Downloading scripts/${file}"
+        curl -fsSL "$url" -o "${dest_dir}/${file}" || error "Failed to download $url"
+    done
+}
+
+run_merge_hooks_config() {
+    scripts_dir="$(merge_hooks_scripts_dir)"
+    python3 "${scripts_dir}/merge_hooks_config.py" "$@"
+}
+
 windsurf_hooks_dir() { printf '%s/hooks' "$WINDSURF_INSTALL_DIR"; }
 cursor_hooks_dir() { printf '%s/hooks' "$CURSOR_INSTALL_DIR"; }
 claude_hooks_dir() { printf '%s/hooks' "$CLAUDE_INSTALL_DIR"; }
@@ -97,93 +121,33 @@ download_package_tree() {
 merge_windsurf_hooks_json() {
     hooks_json="${WINDSURF_INSTALL_DIR}/hooks.json"
     script_path="$(windsurf_hooks_dir)/${WINDSURF_SCRIPT}"
+    events="${WINDSURF_PRE_EVENTS} ${WINDSURF_POST_EVENTS}"
 
-    python3 - "$hooks_json" "$script_path" "$WINDSURF_PRE_EVENTS" "$WINDSURF_POST_EVENTS" "$FIRERAVEN_ENTRY_PATTERN" <<'PY'
-import json, os, sys
-hooks_json_path, script_path, pre_events, post_events, owned_pattern = sys.argv[1:6]
-owned_markers = owned_pattern.split("|")
-entry = {"command": f"python3 {script_path}"}
-
-data = {}
-if os.path.isfile(hooks_json_path) and os.path.getsize(hooks_json_path) > 0:
-    with open(hooks_json_path, encoding="utf-8") as f:
-        data = json.load(f)
-
-hooks = data.setdefault("hooks", {})
-for event in (pre_events + " " + post_events).split():
-    entries = hooks.setdefault(event, [])
-    hooks[event] = [
-        e for e in entries if not any(marker in json.dumps(e) for marker in owned_markers)
-    ]
-    hooks[event].append(entry)
-
-os.makedirs(os.path.dirname(hooks_json_path), exist_ok=True)
-with open(hooks_json_path, "w", encoding="utf-8") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-PY
+    run_merge_hooks_config merge-windsurf \
+        --path "$hooks_json" \
+        --script-path "$script_path" \
+        --events "$events" \
+        --owned-pattern "$FIRERAVEN_ENTRY_PATTERN"
 }
 
 merge_cursor_hooks_json() {
     hooks_json="${CURSOR_INSTALL_DIR}/hooks.json"
     script_path="$(cursor_hooks_dir)/${CURSOR_SCRIPT}"
 
-    python3 - "$hooks_json" "$script_path" "$CURSOR_EVENTS" "$FIRERAVEN_ENTRY_PATTERN" <<'PY'
-import json, os, sys
-hooks_json_path, script_path, events, owned_pattern = sys.argv[1:5]
-owned_markers = owned_pattern.split("|")
-entry = {"command": f"python3 {script_path}"}
-
-data = {"version": 1, "hooks": {}}
-if os.path.isfile(hooks_json_path) and os.path.getsize(hooks_json_path) > 0:
-    with open(hooks_json_path, encoding="utf-8") as f:
-        data = json.load(f)
-data.setdefault("version", 1)
-hooks = data.setdefault("hooks", {})
-
-for event in events.split():
-    entries = hooks.setdefault(event, [])
-    hooks[event] = [
-        e for e in entries if not any(marker in json.dumps(e) for marker in owned_markers)
-    ]
-    hooks[event].append(entry)
-
-os.makedirs(os.path.dirname(hooks_json_path), exist_ok=True)
-with open(hooks_json_path, "w", encoding="utf-8") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-PY
+    run_merge_hooks_config merge-cursor \
+        --path "$hooks_json" \
+        --script-path "$script_path" \
+        --events "$CURSOR_EVENTS" \
+        --owned-pattern "$FIRERAVEN_ENTRY_PATTERN"
 }
 
 merge_claude_settings_json() {
     settings_json="${CLAUDE_INSTALL_DIR}/settings.json"
     script_path="$(claude_hooks_dir)/${CLAUDE_SCRIPT}"
 
-    python3 - "$settings_json" "$script_path" <<'PY'
-import json, os, sys
-settings_path, script_path = sys.argv[1:3]
-marker = "fireraven"
-entry = {
-    "matcher": ".*",
-    "hooks": [{"type": "command", "command": f"python3 {script_path}"}],
-}
-
-data = {}
-if os.path.isfile(settings_path) and os.path.getsize(settings_path) > 0:
-    with open(settings_path, encoding="utf-8") as f:
-        data = json.load(f)
-
-hooks = data.setdefault("hooks", {})
-pre = hooks.setdefault("PreToolUse", [])
-pre = [e for e in pre if marker not in json.dumps(e)]
-pre.append(entry)
-hooks["PreToolUse"] = pre
-
-os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-with open(settings_path, "w", encoding="utf-8") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-PY
+    run_merge_hooks_config merge-claude \
+        --path "$settings_json" \
+        --script-path "$script_path"
 }
 
 install_windsurf() {
@@ -227,60 +191,31 @@ install_all_agents() {
 
 remove_agent_hooks() {
     agent="$1"
-    python3 - "$agent" "$WINDSURF_INSTALL_DIR" "$CURSOR_INSTALL_DIR" "$CLAUDE_INSTALL_DIR" "$FIRERAVEN_ENTRY_PATTERN" <<'PY'
-import json, os, sys
-agent, ws, cur, claude, owned_pattern = sys.argv[1:6]
-owned_markers = owned_pattern.split("|")
+    windsurf_events="${WINDSURF_PRE_EVENTS} ${WINDSURF_POST_EVENTS}"
 
-def scrub_json(path, events):
-    if not os.path.isfile(path):
-        return
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
-    hooks = data.get("hooks", {})
-    for event in events:
-        if event not in hooks:
-            continue
-        hooks[event] = [
-            e for e in hooks[event] if not any(marker in json.dumps(e) for marker in owned_markers)
-        ]
-        if not hooks[event]:
-            del hooks[event]
-    if not hooks:
-        os.remove(path)
-    else:
-        data["hooks"] = hooks
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-            f.write("\n")
-
-if agent in ("windsurf", "all"):
-    scrub_json(os.path.join(ws, "hooks.json"), [
-        "pre_user_prompt","pre_run_command","pre_mcp_tool_use","pre_write_code","pre_read_code",
-        "post_cascade_response","post_write_code"])
-if agent in ("cursor", "all"):
-    scrub_json(os.path.join(cur, "hooks.json"), [
-        "beforeSubmitPrompt","beforeShellExecution","beforeMCPExecution","beforeReadFile"])
-if agent in ("claude", "all"):
-    path = os.path.join(claude, "settings.json")
-    if os.path.isfile(path):
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        hooks = data.get("hooks", {})
-        pre = hooks.get("PreToolUse", [])
-        pre = [e for e in pre if not any(marker in json.dumps(e) for marker in owned_markers)]
-        if pre:
-            hooks["PreToolUse"] = pre
-        elif "PreToolUse" in hooks:
-            del hooks["PreToolUse"]
-        if not hooks.get("hooks") and not hooks:
-            if not data.get("hooks"):
-                pass
-        data["hooks"] = hooks
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-            f.write("\n")
-PY
+    case "$agent" in
+        windsurf|all)
+            run_merge_hooks_config scrub-windsurf \
+                --path "${WINDSURF_INSTALL_DIR}/hooks.json" \
+                --events "$windsurf_events" \
+                --owned-pattern "$FIRERAVEN_ENTRY_PATTERN"
+            ;;
+    esac
+    case "$agent" in
+        cursor|all)
+            run_merge_hooks_config scrub-cursor \
+                --path "${CURSOR_INSTALL_DIR}/hooks.json" \
+                --events "$CURSOR_EVENTS" \
+                --owned-pattern "$FIRERAVEN_ENTRY_PATTERN"
+            ;;
+    esac
+    case "$agent" in
+        claude|all)
+            run_merge_hooks_config scrub-claude \
+                --path "${CLAUDE_INSTALL_DIR}/settings.json" \
+                --owned-pattern "$FIRERAVEN_ENTRY_PATTERN"
+            ;;
+    esac
 }
 
 fireraven_install_complete_message() {

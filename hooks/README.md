@@ -25,6 +25,48 @@ irm https://raw.githubusercontent.com/fireravenai/fireraven-agent-hooks/refs/hea
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/fireravenai/fireraven-agent-hooks/refs/heads/main/install.ps1))) -Agent cursor
 ```
 
+## Configure
+
+After install, edit `config.env` in the agent's hooks directory. Restart the IDE after changes.
+
+| Agent | `config.env` path |
+|-------|-------------------|
+| Cursor | `~/.cursor/hooks/config.env` |
+| Windsurf / Devin | `~/.codeium/windsurf/hooks/config.env` |
+| Claude Code | `~/.claude/hooks/config.env` |
+
+**Required:**
+
+```env
+FIRERAVEN_GUARDRAILS_API_KEY=<your-api-key>
+FIRERAVEN_PROJECT_ID=<your-project-id>
+```
+
+**Optional:**
+
+```env
+FIRERAVEN_API_URL=https://api.fireraven.ai
+FIRERAVEN_EXECUTION_MODE=fast
+FIRERAVEN_REQUEST_TIMEOUT_SEC=15
+FIRERAVEN_FAIL_MODE=closed
+```
+
+### `FIRERAVEN_EXECUTION_MODE`
+
+| Value | Default | Behavior |
+|-------|---------|----------|
+| `fast` | yes | Lower latency. FireGuard runs eligible checks in parallel and returns as soon as a blocking result is known. |
+| `normal` | | Full sequential checks with complete policy and security details. |
+
+### `FIRERAVEN_FAIL_MODE`
+
+| Value | Default | Behavior |
+|-------|---------|----------|
+| `closed` | yes | Block the agent action when the hook cannot reach FireGuard (network, timeout, or HTTP error). |
+| `open` | | Allow the action through on transient FireGuard API failures. Policy violations and missing credentials still block. |
+
+See [config.example.env](config.example.env) for inline comments.
+
 ## Manual test (Windsurf)
 
 ```bash

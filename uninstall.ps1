@@ -1,6 +1,8 @@
 param(
     [ValidateSet("windsurf", "cursor", "claude", "copilot", "all")]
-    [string]$Agent = $(if ($env:FIRERAVEN_AGENT) { $env:FIRERAVEN_AGENT } else { "all" })
+    [string]$Agent = $(if ($env:FIRERAVEN_AGENT) { $env:FIRERAVEN_AGENT } else { "all" }),
+    [string]$HooksRepo = $(if ($env:FIRERAVEN_HOOKS_REPO) { $env:FIRERAVEN_HOOKS_REPO } else { "fireravenai/fireraven-agent-hooks" }),
+    [string]$HooksRef = $(if ($env:FIRERAVEN_HOOKS_REF) { $env:FIRERAVEN_HOOKS_REF } else { "main" })
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,136 +49,140 @@ function Get-ClaudeInstallDir {
     return (Join-Path (Get-UserHome) ".claude")
 }
 
-function ConvertTo-Hashtable {
-    param($InputObject)
-
-    if ($null -eq $InputObject) {
-        return $null
+function Test-CommandWorks {
+    param(
+        [string]$FilePath,
+        [string[]]$ArgumentList
+    )
+    try {
+        $process = Start-Process -FilePath $FilePath -ArgumentList ($ArgumentList + @("--version")) -NoNewWindow -PassThru -Wait -RedirectStandardOutput ([IO.Path]::GetTempFileName()) -RedirectStandardError ([IO.Path]::GetTempFileName())
+        return ($process.ExitCode -eq 0)
     }
-    if ($InputObject -is [System.Collections.IDictionary]) {
-        $hash = @{}
-        foreach ($key in $InputObject.Keys) {
-            $hash[$key] = ConvertTo-Hashtable $InputObject[$key]
-        }
-        return $hash
+    catch {
+        return $false
     }
-    if (($InputObject -is [System.Collections.IEnumerable]) -and -not ($InputObject -is [string])) {
-        $items = @()
-        foreach ($item in $InputObject) {
-            $items += ConvertTo-Hashtable $item
-        }
-        return $items
-    }
-    if ($InputObject -is [pscustomobject]) {
-        $hash = @{}
-        foreach ($property in $InputObject.PSObject.Properties) {
-            $hash[$property.Name] = ConvertTo-Hashtable $property.Value
-        }
-        return $hash
-    }
-    return $InputObject
 }
 
-function Read-JsonFile {
-    param([string]$Path)
+function Get-PythonCommand {
+    $candidates = @(
+        @{ FilePath = "py"; Arguments = @("-3") },
+        @{ FilePath = "python"; Arguments = @() },
+        @{ FilePath = "python3"; Arguments = @() }
+    )
 
-    if ((Test-Path $Path) -and ((Get-Item $Path).Length -gt 0)) {
-        return ConvertTo-Hashtable ((Get-Content -Raw -Path $Path) | ConvertFrom-Json)
+    foreach ($candidate in $candidates) {
+        if (Get-Command $candidate.FilePath -ErrorAction SilentlyContinue) {
+            if (Test-CommandWorks -FilePath $candidate.FilePath -ArgumentList $candidate.Arguments) {
+                return $candidate
+            }
+        }
+    }
+
+    throw "Python 3 is required. Install Python from https://www.python.org/downloads/windows/ and make sure it is on PATH."
+}
+
+function Get-LocalRepoRoot {
+    if (-not $PSScriptRoot) {
+        return $null
+    }
+    if ((Test-Path (Join-Path $PSScriptRoot "core")) -and (Test-Path (Join-Path $PSScriptRoot "hooks"))) {
+        return $PSScriptRoot
     }
     return $null
 }
 
-function Write-JsonFile {
+function Download-File {
     param(
-        [string]$Path,
-        [hashtable]$Data
+        [string]$Url,
+        [string]$Destination
+    )
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Destination) | Out-Null
+    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Destination
+}
+
+function Get-MergeHooksScriptsDir {
+    param([string]$RawBase)
+
+    $repoRoot = Get-LocalRepoRoot
+    if ($repoRoot) {
+        $scriptsDir = Join-Path $repoRoot "scripts"
+        if (Test-Path (Join-Path $scriptsDir "merge_hooks_config.py")) {
+            return $scriptsDir
+        }
+    }
+
+    $dir = Join-Path $env:TEMP "fireraven-agent-hooks-scripts"
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    foreach ($file in @("jsonc_modify.py", "merge_hooks_config.py")) {
+        Download-File -Url "$RawBase/scripts/$file" -Destination (Join-Path $dir $file)
+    }
+    return $dir
+}
+
+function Invoke-MergeHooksConfig {
+    param(
+        [hashtable]$PythonCommand,
+        [string]$RawBase,
+        [string[]]$Arguments
     )
 
-    ($Data | ConvertTo-Json -Depth 20) + "`n" | Set-Content -Encoding UTF8 -Path $Path
+    $scriptsDir = Get-MergeHooksScriptsDir -RawBase $RawBase
+    $scriptPath = Join-Path $scriptsDir "merge_hooks_config.py"
+    $command = @($PythonCommand.FilePath) + @($PythonCommand.Arguments) + @($scriptPath) + $Arguments
+    & $command[0] $command[1..($command.Length - 1)]
+    if ($LASTEXITCODE -ne 0) {
+        throw "merge_hooks_config.py failed"
+    }
 }
 
-function Remove-FireravenEntries {
-    param($Entries)
-
-    $result = @()
-    foreach ($entry in @($Entries)) {
-        $serialized = $entry | ConvertTo-Json -Compress -Depth 20
-        if ($serialized -notmatch $FireravenEntryPattern) {
-            $result += $entry
-        }
-    }
-    return $result
-}
-
-function Remove-HookEntries {
-    param(
-        [string]$Path,
-        [string[]]$Events
-    )
-
-    $data = Read-JsonFile -Path $Path
-    if ($null -eq $data -or -not $data.ContainsKey("hooks") -or $null -eq $data["hooks"]) {
-        return
-    }
-
-    $hooks = $data["hooks"]
-    foreach ($event in $Events) {
-        if (-not $hooks.ContainsKey($event)) {
-            continue
-        }
-        $remaining = Remove-FireravenEntries $hooks[$event]
-        if ($remaining.Count -gt 0) {
-            $hooks[$event] = $remaining
-        }
-        else {
-            $hooks.Remove($event)
-        }
-    }
-
-    Write-JsonFile -Path $Path -Data $data
-}
-
-function Remove-ClaudeHookEntries {
-    param([string]$Path)
-
-    $data = Read-JsonFile -Path $Path
-    if ($null -eq $data -or -not $data.ContainsKey("hooks") -or $null -eq $data["hooks"]) {
-        return
-    }
-
-    $hooks = $data["hooks"]
-    if (-not $hooks.ContainsKey("PreToolUse")) {
-        return
-    }
-
-    $remaining = Remove-FireravenEntries $hooks["PreToolUse"]
-    if ($remaining.Count -gt 0) {
-        $hooks["PreToolUse"] = $remaining
-    }
-    else {
-        $hooks.Remove("PreToolUse")
-    }
-
-    Write-JsonFile -Path $Path -Data $data
-}
+$pythonCommand = Get-PythonCommand
+$rawBase = "https://raw.githubusercontent.com/$HooksRepo/refs/heads/$HooksRef"
 
 Write-Info "Uninstalling Fireraven hooks (agent=$Agent)"
 
 switch ($Agent) {
     "all" {
-        Remove-HookEntries -Path (Join-Path (Get-WindsurfInstallDir) "hooks.json") -Events $WindsurfEvents
-        Remove-HookEntries -Path (Join-Path (Get-CursorInstallDir) "hooks.json") -Events $CursorEvents
-        Remove-ClaudeHookEntries -Path (Join-Path (Get-ClaudeInstallDir) "settings.json")
+        Invoke-MergeHooksConfig -PythonCommand $pythonCommand -RawBase $rawBase -Arguments @(
+            "scrub-windsurf",
+            "--path", (Join-Path (Get-WindsurfInstallDir) "hooks.json"),
+            "--events", ($WindsurfEvents -join " "),
+            "--owned-pattern", $FireravenEntryPattern
+        )
+        Invoke-MergeHooksConfig -PythonCommand $pythonCommand -RawBase $rawBase -Arguments @(
+            "scrub-cursor",
+            "--path", (Join-Path (Get-CursorInstallDir) "hooks.json"),
+            "--events", ($CursorEvents -join " "),
+            "--owned-pattern", $FireravenEntryPattern
+        )
+        Invoke-MergeHooksConfig -PythonCommand $pythonCommand -RawBase $rawBase -Arguments @(
+            "scrub-claude",
+            "--path", (Join-Path (Get-ClaudeInstallDir) "settings.json"),
+            "--owned-pattern", $FireravenEntryPattern
+        )
         Write-Info "Copilot uses connector topics in adapters/copilot/ (no local hook install)"
     }
     "windsurf" {
-        Remove-HookEntries -Path (Join-Path (Get-WindsurfInstallDir) "hooks.json") -Events $WindsurfEvents
+        Invoke-MergeHooksConfig -PythonCommand $pythonCommand -RawBase $rawBase -Arguments @(
+            "scrub-windsurf",
+            "--path", (Join-Path (Get-WindsurfInstallDir) "hooks.json"),
+            "--events", ($WindsurfEvents -join " "),
+            "--owned-pattern", $FireravenEntryPattern
+        )
     }
     "cursor" {
-        Remove-HookEntries -Path (Join-Path (Get-CursorInstallDir) "hooks.json") -Events $CursorEvents
+        Invoke-MergeHooksConfig -PythonCommand $pythonCommand -RawBase $rawBase -Arguments @(
+            "scrub-cursor",
+            "--path", (Join-Path (Get-CursorInstallDir) "hooks.json"),
+            "--events", ($CursorEvents -join " "),
+            "--owned-pattern", $FireravenEntryPattern
+        )
     }
     "claude" {
-        Remove-ClaudeHookEntries -Path (Join-Path (Get-ClaudeInstallDir) "settings.json")
+        Invoke-MergeHooksConfig -PythonCommand $pythonCommand -RawBase $rawBase -Arguments @(
+            "scrub-claude",
+            "--path", (Join-Path (Get-ClaudeInstallDir) "settings.json"),
+            "--owned-pattern", $FireravenEntryPattern
+        )
     }
     "copilot" {
         Write-Info "Copilot uses connector topics in adapters/copilot/ (no local hook install)"

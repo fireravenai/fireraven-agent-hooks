@@ -33,6 +33,9 @@ TEMP_DIR="$(mktemp -d)"
 RAW_BASE="https://raw.githubusercontent.com/${FIRERAVEN_HOOKS_REPO}/refs/heads/${FIRERAVEN_HOOKS_REF}"
 
 curl -fsSL "${RAW_BASE}/scripts/lib.sh" -o "${TEMP_DIR}/lib.sh" || exit 1
+download_merge_scripts "$RAW_BASE" "$TEMP_DIR"
+FIRERAVEN_SCRIPTS_DIR="$TEMP_DIR"
+export FIRERAVEN_SCRIPTS_DIR
 # shellcheck source=/dev/null
 . "${TEMP_DIR}/lib.sh"
 

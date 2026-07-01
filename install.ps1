@@ -148,6 +148,41 @@ function Get-LocalRepoRoot {
     return $null
 }
 
+function Get-MergeHooksScriptsDir {
+    param([string]$RawBase)
+
+    $repoRoot = Get-LocalRepoRoot
+    if ($repoRoot) {
+        $scriptsDir = Join-Path $repoRoot "scripts"
+        if (Test-Path (Join-Path $scriptsDir "merge_hooks_config.py")) {
+            return $scriptsDir
+        }
+    }
+
+    $dir = Join-Path $env:TEMP "fireraven-agent-hooks-scripts"
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    foreach ($file in @("jsonc_modify.py", "merge_hooks_config.py")) {
+        Download-File -Url "$RawBase/scripts/$file" -Destination (Join-Path $dir $file)
+    }
+    return $dir
+}
+
+function Invoke-MergeHooksConfig {
+    param(
+        [hashtable]$PythonCommand,
+        [string]$RawBase,
+        [string[]]$Arguments
+    )
+
+    $scriptsDir = Get-MergeHooksScriptsDir -RawBase $RawBase
+    $scriptPath = Join-Path $scriptsDir "merge_hooks_config.py"
+    $command = @($PythonCommand.FilePath) + @($PythonCommand.Arguments) + @($scriptPath) + $Arguments
+    & $command[0] $command[1..($command.Length - 1)]
+    if ($LASTEXITCODE -ne 0) {
+        throw "merge_hooks_config.py failed"
+    }
+}
+
 function Copy-PackageTree {
     param(
         [string]$SourceRoot,
@@ -321,129 +356,114 @@ function Add-HookEntry {
 
 function Merge-WindsurfHooksJson {
     param(
-        [hashtable]$PythonCommand
+        [hashtable]$PythonCommand,
+        [string]$RawBase
     )
 
     $hooksJson = Join-Path (Get-WindsurfInstallDir) "hooks.json"
     $scriptPath = Join-Path (Get-WindsurfHooksDir) $WindsurfScript
-    $entry = @{
-        command = New-PortablePythonCommand -ScriptPath $scriptPath
-        powershell = New-PowerShellPythonCommand -PythonCommand $PythonCommand -ScriptPath $scriptPath
-    }
+    $events = ($WindsurfPreEvents + $WindsurfPostEvents) -join " "
 
-    $data = Read-JsonFile -Path $hooksJson
-    if (-not $data.ContainsKey("hooks") -or $null -eq $data["hooks"]) {
-        $data["hooks"] = @{}
-    }
-
-    foreach ($event in ($WindsurfPreEvents + $WindsurfPostEvents)) {
-        Add-HookEntry -Hooks $data["hooks"] -Event $event -Entry $entry
-    }
-
-    Write-JsonFile -Path $hooksJson -Data $data
+    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -RawBase $RawBase -Arguments @(
+        "merge-windsurf",
+        "--path", $hooksJson,
+        "--script-path", $scriptPath,
+        "--events", $events,
+        "--owned-pattern", $FireravenEntryPattern,
+        "--powershell-command", (New-PowerShellPythonCommand -PythonCommand $PythonCommand -ScriptPath $scriptPath)
+    )
     Write-Info "Registered Devin/Windsurf hooks in $hooksJson"
 }
 
 function Merge-CursorHooksJson {
     param(
-        [hashtable]$PythonCommand
+        [hashtable]$PythonCommand,
+        [string]$RawBase
     )
 
     $hooksJson = Join-Path (Get-CursorInstallDir) "hooks.json"
-    $entry = @{
-        command = New-CursorDirectHookCommand
-    }
-
-    $data = Read-JsonFile -Path $hooksJson -DefaultValue @{ version = 1; hooks = @{} }
-    if (-not $data.ContainsKey("version")) {
-        $data["version"] = 1
-    }
-    if (-not $data.ContainsKey("hooks") -or $null -eq $data["hooks"]) {
-        $data["hooks"] = @{}
-    }
-
-    foreach ($event in $CursorEvents) {
-        Add-HookEntry -Hooks $data["hooks"] -Event $event -Entry $entry
-    }
-
-    Write-JsonFile -Path $hooksJson -Data $data
+    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -RawBase $RawBase -Arguments @(
+        "merge-cursor",
+        "--path", $hooksJson,
+        "--script-path", (Join-Path (Get-CursorHooksDir) $CursorScript),
+        "--events", ($CursorEvents -join " "),
+        "--owned-pattern", $FireravenEntryPattern,
+        "--command", (New-CursorDirectHookCommand)
+    )
     Write-Info "Registered Cursor hooks in $hooksJson"
 }
 
 function Merge-ClaudeSettingsJson {
     param(
-        [hashtable]$PythonCommand
+        [hashtable]$PythonCommand,
+        [string]$RawBase
     )
 
     $settingsJson = Join-Path (Get-ClaudeInstallDir) "settings.json"
     $scriptPath = Join-Path (Get-ClaudeHooksDir) $ClaudeScript
     $pythonInvocation = New-PythonInvocation -PythonCommand $PythonCommand -ScriptPath $scriptPath
-    $entry = @{
-        matcher = ".*"
-        hooks = @(@{
-            type = "command"
-            command = New-CursorHookCommand -PythonInvocation $pythonInvocation
-        })
-    }
 
-    $data = Read-JsonFile -Path $settingsJson
-    if (-not $data.ContainsKey("hooks") -or $null -eq $data["hooks"]) {
-        $data["hooks"] = @{}
-    }
-    $hooks = $data["hooks"]
-    $preEntries = @()
-    if ($hooks.ContainsKey("PreToolUse")) {
-        $preEntries = Remove-FireravenEntries $hooks["PreToolUse"]
-    }
-    $preEntries += $entry
-    $hooks["PreToolUse"] = $preEntries
-
-    Write-JsonFile -Path $settingsJson -Data $data
+    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -RawBase $RawBase -Arguments @(
+        "merge-claude",
+        "--path", $settingsJson,
+        "--script-path", $scriptPath,
+        "--command", (New-CursorHookCommand -PythonInvocation $pythonInvocation)
+    )
     Write-Info "Registered Claude Code hooks in $settingsJson"
 }
 
 function Install-Windsurf {
-    param([hashtable]$PythonCommand)
+    param(
+        [hashtable]$PythonCommand,
+        [string]$RawBase
+    )
     $destination = Get-WindsurfHooksDir
     Write-Info "Installing Devin/Windsurf hooks to $destination"
     Install-PackageTree -DestinationDir $destination
     Ensure-ConfigEnv -DestinationDir $destination
-    Merge-WindsurfHooksJson -PythonCommand $PythonCommand
+    Merge-WindsurfHooksJson -PythonCommand $PythonCommand -RawBase $RawBase
 }
 
 function Install-Cursor {
-    param([hashtable]$PythonCommand)
+    param(
+        [hashtable]$PythonCommand,
+        [string]$RawBase
+    )
     $destination = Get-CursorHooksDir
     Write-Info "Installing Cursor hooks to $destination"
     Install-PackageTree -DestinationDir $destination
     Ensure-ConfigEnv -DestinationDir $destination
-    Merge-CursorHooksJson -PythonCommand $PythonCommand
+    Merge-CursorHooksJson -PythonCommand $PythonCommand -RawBase $RawBase
 }
 
 function Install-Claude {
-    param([hashtable]$PythonCommand)
+    param(
+        [hashtable]$PythonCommand,
+        [string]$RawBase
+    )
     $destination = Get-ClaudeHooksDir
     Write-Info "Installing Claude Code hooks to $destination"
     Install-PackageTree -DestinationDir $destination
     Ensure-ConfigEnv -DestinationDir $destination
-    Merge-ClaudeSettingsJson -PythonCommand $PythonCommand
+    Merge-ClaudeSettingsJson -PythonCommand $PythonCommand -RawBase $RawBase
 }
 
 $pythonCommand = Get-PythonCommand
 $pythonText = (@($pythonCommand.FilePath) + @($pythonCommand.Arguments)) -join " "
+$rawBase = "https://raw.githubusercontent.com/$HooksRepo/refs/heads/$HooksRef"
 Write-Info "Using Python command: $pythonText"
 Write-Info "Installing Fireraven agent hooks ($Agent)"
 
 switch ($Agent) {
     "all" {
-        Install-Windsurf -PythonCommand $pythonCommand
-        Install-Cursor -PythonCommand $pythonCommand
-        Install-Claude -PythonCommand $pythonCommand
+        Install-Windsurf -PythonCommand $pythonCommand -RawBase $rawBase
+        Install-Cursor -PythonCommand $pythonCommand -RawBase $rawBase
+        Install-Claude -PythonCommand $pythonCommand -RawBase $rawBase
         Write-Info "Copilot uses connector topics in adapters/copilot/ (no local hook install)"
     }
-    "windsurf" { Install-Windsurf -PythonCommand $pythonCommand }
-    "cursor" { Install-Cursor -PythonCommand $pythonCommand }
-    "claude" { Install-Claude -PythonCommand $pythonCommand }
+    "windsurf" { Install-Windsurf -PythonCommand $pythonCommand -RawBase $rawBase }
+    "cursor" { Install-Cursor -PythonCommand $pythonCommand -RawBase $rawBase }
+    "claude" { Install-Claude -PythonCommand $pythonCommand -RawBase $rawBase }
     "copilot" { Write-Info "Copilot uses connector topics in adapters/copilot/ (no local hook install)" }
 }
 

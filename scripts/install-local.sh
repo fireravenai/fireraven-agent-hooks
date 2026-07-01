@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)"
+FIRERAVEN_SCRIPTS_DIR="$SCRIPT_DIR"
+export FIRERAVEN_SCRIPTS_DIR
 
 # shellcheck source=lib.sh
 . "${SCRIPT_DIR}/lib.sh"

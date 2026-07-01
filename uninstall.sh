@@ -17,6 +17,8 @@ done
 load_lib() {
     SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || true)"
     if [ -n "$SCRIPT_DIR" ] && [ -f "${SCRIPT_DIR}/scripts/lib.sh" ]; then
+        FIRERAVEN_SCRIPTS_DIR="${SCRIPT_DIR}/scripts"
+        export FIRERAVEN_SCRIPTS_DIR
         # shellcheck source=scripts/lib.sh
         . "${SCRIPT_DIR}/scripts/lib.sh"
         return 0
@@ -24,6 +26,10 @@ load_lib() {
     TEMP_DIR="$(mktemp -d)"
     RAW_BASE="https://raw.githubusercontent.com/${FIRERAVEN_HOOKS_REPO}/refs/heads/${FIRERAVEN_HOOKS_REF}"
     curl -fsSL "${RAW_BASE}/scripts/lib.sh" -o "${TEMP_DIR}/lib.sh"
+    curl -fsSL "${RAW_BASE}/scripts/jsonc_modify.py" -o "${TEMP_DIR}/jsonc_modify.py"
+    curl -fsSL "${RAW_BASE}/scripts/merge_hooks_config.py" -o "${TEMP_DIR}/merge_hooks_config.py"
+    FIRERAVEN_SCRIPTS_DIR="$TEMP_DIR"
+    export FIRERAVEN_SCRIPTS_DIR
     # shellcheck source=/dev/null
     . "${TEMP_DIR}/lib.sh"
 }
