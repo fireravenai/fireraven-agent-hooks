@@ -12,25 +12,28 @@ usage() {
 Fireraven agent hooks CLI
 
 Usage:
-  fg install [--agent windsurf|cursor|claude|copilot|all]
+  fg install [--agent windsurf|cursor|claude|github-copilot|copilot|all] [--project]
   fg init      Interactive config setup for Windsurf hooks
   fg doctor    Check python3, config, and hook registration
-  fg uninstall [--agent all|windsurf|cursor|claude]
+  fg uninstall [--agent all|windsurf|cursor|claude|github-copilot] [--project]
 
 Environment:
   FIRERAVEN_INSTALL_DIR, FIRERAVEN_CURSOR_INSTALL_DIR, FIRERAVEN_CLAUDE_INSTALL_DIR
+  FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR, FIRERAVEN_PROJECT_INSTALL
 EOF
 }
 
 cmd_install() {
     agent="${FIRERAVEN_AGENT:-windsurf}"
+    project_install=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --agent) agent="$2"; shift 2 ;;
+            --project) project_install=1; shift ;;
             *) shift ;;
         esac
     done
-    FIRERAVEN_AGENT="$agent" "${SCRIPT_DIR}/scripts/install-local.sh"
+    FIRERAVEN_AGENT="$agent" FIRERAVEN_PROJECT_INSTALL="$project_install" "${SCRIPT_DIR}/scripts/install-local.sh"
 }
 
 cmd_init() {
@@ -57,7 +60,11 @@ EOF
 cmd_doctor() {
     check_python3
     ok=0
-    for label_dir in "Windsurf:$(windsurf_hooks_dir)" "Cursor:$(cursor_hooks_dir)" "Claude:$(claude_hooks_dir)"; do
+    for label_dir in \
+        "Windsurf:$(windsurf_hooks_dir)" \
+        "Cursor:$(cursor_hooks_dir)" \
+        "Claude:$(claude_hooks_dir)" \
+        "GitHub Copilot:$(github_copilot_hooks_dir)"; do
         label="${label_dir%%:*}"
         dir="${label_dir#*:}"
         echo "--- ${label} (${dir}) ---"
@@ -67,7 +74,7 @@ cmd_doctor() {
             warn "config.env missing"
             ok=1
         fi
-        if [ -f "${dir}/windsurf_guardrail.py" ]; then
+        if [ -f "${dir}/github_copilot_guardrail.py" ] || [ -f "${dir}/cursor_guardrail.py" ] || [ -f "${dir}/windsurf_guardrail.py" ]; then
             info "hook scripts present"
         else
             warn "hook scripts not installed"
@@ -79,13 +86,15 @@ cmd_doctor() {
 
 cmd_uninstall() {
     agent="all"
+    project_install=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --agent) agent="$2"; shift 2 ;;
+            --project) project_install=1; shift ;;
             *) shift ;;
         esac
     done
-    remove_agent_hooks "$agent"
+    FIRERAVEN_PROJECT_INSTALL="$project_install" remove_agent_hooks "$agent"
 }
 
 main() {

@@ -10,6 +10,8 @@ Installed to each agent's hooks directory (e.g. `~/.codeium/windsurf/hooks/`).
 | `cursor_guardrail.py` | Cursor | `hooks.json` before* events |
 | `run_cursor_guardrail.ps1` | Cursor on Windows | Optional raw-stdin PowerShell fallback |
 | `claude_guardrail.py` | Claude Code | `settings.json` PreToolUse |
+| `github_copilot_guardrail.py` | GitHub Copilot | `fireraven-fireguard.json` userPromptSubmitted / preToolUse / postToolUse |
+| `run_github_copilot_guardrail.ps1` | GitHub Copilot on Windows | Optional raw-stdin PowerShell fallback |
 | `fireraven_input_guardrail.py` | Windsurf | Backward-compatible alias |
 
 ## Install
@@ -34,6 +36,7 @@ After install, edit `config.env` in the agent's hooks directory. Restart the IDE
 | Cursor | `~/.cursor/hooks/config.env` |
 | Windsurf / Devin | `~/.codeium/windsurf/hooks/config.env` |
 | Claude Code | `~/.claude/hooks/config.env` |
+| GitHub Copilot | `~/.copilot/hooks/fireraven/config.env` or `.github/hooks/fireraven/config.env` (project) |
 
 **Required:**
 

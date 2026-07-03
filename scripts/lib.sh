@@ -8,17 +8,20 @@ FIRERAVEN_AGENT="${FIRERAVEN_AGENT:-windsurf}"
 WINDSURF_INSTALL_DIR="${FIRERAVEN_INSTALL_DIR:-$HOME/.codeium/windsurf}"
 CURSOR_INSTALL_DIR="${FIRERAVEN_CURSOR_INSTALL_DIR:-$HOME/.cursor}"
 CLAUDE_INSTALL_DIR="${FIRERAVEN_CLAUDE_INSTALL_DIR:-$HOME/.claude}"
+GITHUB_COPILOT_INSTALL_DIR="${FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR:-$HOME/.copilot}"
 
 WINDSURF_SCRIPT="windsurf_guardrail.py"
 CURSOR_SCRIPT="cursor_guardrail.py"
 CLAUDE_SCRIPT="claude_guardrail.py"
+GITHUB_COPILOT_SCRIPT="github_copilot_guardrail.py"
 MARKER="fireraven"
-FIRERAVEN_ENTRY_PATTERN="fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py"
+FIRERAVEN_ENTRY_PATTERN="fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|github_copilot_guardrail.py|run_github_copilot_guardrail.ps1"
 
 WINDSURF_PRE_EVENTS="pre_user_prompt pre_run_command pre_mcp_tool_use pre_write_code pre_read_code"
 WINDSURF_POST_EVENTS="post_cascade_response post_write_code"
 
 CURSOR_EVENTS="beforeSubmitPrompt beforeShellExecution beforeMCPExecution beforeReadFile"
+GITHUB_COPILOT_EVENTS="userPromptSubmitted preToolUse postToolUse"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -60,6 +63,10 @@ run_merge_hooks_config() {
 windsurf_hooks_dir() { printf '%s/hooks' "$WINDSURF_INSTALL_DIR"; }
 cursor_hooks_dir() { printf '%s/hooks' "$CURSOR_INSTALL_DIR"; }
 claude_hooks_dir() { printf '%s/hooks' "$CLAUDE_INSTALL_DIR"; }
+github_copilot_hooks_dir() { printf '%s/hooks/fireraven' "$GITHUB_COPILOT_INSTALL_DIR"; }
+github_copilot_hooks_json() { printf '%s/hooks/fireraven-fireguard.json' "$GITHUB_COPILOT_INSTALL_DIR"; }
+github_copilot_project_hooks_dir() { printf '%s/.github/hooks/fireraven' "$(pwd)"; }
+github_copilot_project_hooks_json() { printf '%s/.github/hooks/fireraven-fireguard.json' "$(pwd)"; }
 
 setup_config_env() {
     dest_dir="$1"
@@ -85,6 +92,7 @@ copy_package_tree() {
     cp -R "${src_root}/core" "${src_root}/adapters" "${dest_dir}/"
 
     for file in windsurf_guardrail.py cursor_guardrail.py run_cursor_guardrail.ps1 claude_guardrail.py \
+        github_copilot_guardrail.py run_github_copilot_guardrail.ps1 \
         fireraven_input_guardrail.py _bootstrap.py config.example.env README.md; do
         if [ -f "${src_root}/hooks/${file}" ]; then
             cp "${src_root}/hooks/${file}" "${dest_dir}/${file}"
@@ -102,7 +110,7 @@ download_package_tree() {
     for path in \
         core/__init__.py core/config.py core/session_store.py core/fireraven_client.py \
         core/serializers.py core/guardrail.py \
-        adapters/__init__.py adapters/windsurf.py adapters/cursor.py adapters/claude.py; do
+        adapters/__init__.py adapters/windsurf.py adapters/cursor.py adapters/claude.py adapters/github_copilot.py; do
         url="${raw_base}/${path}"
         mkdir -p "${dest_dir}/$(dirname "$path")"
         info "Downloading ${path}"
@@ -110,6 +118,7 @@ download_package_tree() {
     done
 
     for file in _bootstrap.py windsurf_guardrail.py cursor_guardrail.py run_cursor_guardrail.ps1 claude_guardrail.py \
+        github_copilot_guardrail.py run_github_copilot_guardrail.ps1 \
         fireraven_input_guardrail.py config.example.env README.md; do
         url="${raw_base}/hooks/${file}"
         info "Downloading hooks/${file}"
@@ -150,6 +159,31 @@ merge_claude_settings_json() {
         --script-path "$script_path"
 }
 
+merge_github_copilot_hooks_json() {
+    target="${1:-user}"
+    events="${GITHUB_COPILOT_EVENTS}"
+
+    if [ "$target" = "project" ]; then
+        hooks_json="$(github_copilot_project_hooks_json)"
+        script_path=".github/hooks/fireraven/${GITHUB_COPILOT_SCRIPT}"
+    else
+        hooks_json="$(github_copilot_hooks_json)"
+        script_path="$(github_copilot_hooks_dir)/${GITHUB_COPILOT_SCRIPT}"
+    fi
+
+    bash_cmd="python3 ${script_path}"
+    ps_cmd="py -3 ${script_path}"
+
+    run_merge_hooks_config merge-github-copilot \
+        --path "$hooks_json" \
+        --script-path "$script_path" \
+        --events "$events" \
+        --owned-pattern "$FIRERAVEN_ENTRY_PATTERN" \
+        --bash-command "$bash_cmd" \
+        --powershell-command "$ps_cmd" \
+        --cwd "."
+}
+
 install_windsurf() {
     info "Installing Windsurf hooks to $(windsurf_hooks_dir)"
     setup_config_env "$(windsurf_hooks_dir)"
@@ -171,13 +205,35 @@ install_claude() {
     info "Registered Claude hooks in ${CLAUDE_INSTALL_DIR}/settings.json"
 }
 
+install_github_copilot() {
+    info "Installing GitHub Copilot hooks to $(github_copilot_hooks_dir)"
+    setup_config_env "$(github_copilot_hooks_dir)"
+    merge_github_copilot_hooks_json user
+    info "Registered GitHub Copilot hooks in $(github_copilot_hooks_json)"
+}
+
+install_github_copilot_project() {
+    info "Installing GitHub Copilot project hooks to $(github_copilot_project_hooks_dir)"
+    setup_config_env "$(github_copilot_project_hooks_dir)"
+    merge_github_copilot_hooks_json project
+    info "Registered GitHub Copilot hooks in $(github_copilot_project_hooks_json)"
+    warn "Commit .github/hooks/fireraven-fireguard.json and .github/hooks/fireraven/ to your default branch for Copilot cloud agent"
+}
+
 install_agent() {
     agent="$1"
     case "$agent" in
         windsurf) install_windsurf ;;
         cursor) install_cursor ;;
         claude) install_claude ;;
-        copilot) info "Copilot uses connector topics in adapters/copilot/ (no local hook install)" ;;
+        github-copilot)
+            if [ "${FIRERAVEN_PROJECT_INSTALL:-0}" = "1" ]; then
+                install_github_copilot_project
+            else
+                install_github_copilot
+            fi
+            ;;
+        copilot) info "Copilot Studio uses connector topics in adapters/copilot/ (see README)" ;;
         *) error "Unknown agent: $agent" ;;
     esac
 }
@@ -186,7 +242,8 @@ install_all_agents() {
     install_windsurf
     install_cursor
     install_claude
-    info "Copilot: see adapters/copilot/README.md for Studio setup"
+    install_github_copilot
+    info "Copilot Studio: see adapters/copilot/README.md for Studio setup"
 }
 
 remove_agent_hooks() {
@@ -214,6 +271,22 @@ remove_agent_hooks() {
             run_merge_hooks_config scrub-claude \
                 --path "${CLAUDE_INSTALL_DIR}/settings.json" \
                 --owned-pattern "$FIRERAVEN_ENTRY_PATTERN"
+            ;;
+    esac
+    case "$agent" in
+        github-copilot|all)
+            if [ -f "$(github_copilot_hooks_json)" ]; then
+                run_merge_hooks_config scrub-github-copilot \
+                    --path "$(github_copilot_hooks_json)" \
+                    --events "$GITHUB_COPILOT_EVENTS" \
+                    --owned-pattern "$FIRERAVEN_ENTRY_PATTERN"
+            fi
+            if [ "${FIRERAVEN_PROJECT_INSTALL:-0}" = "1" ] && [ -f "$(github_copilot_project_hooks_json)" ]; then
+                run_merge_hooks_config scrub-github-copilot \
+                    --path "$(github_copilot_project_hooks_json)" \
+                    --events "$GITHUB_COPILOT_EVENTS" \
+                    --owned-pattern "$FIRERAVEN_ENTRY_PATTERN"
+            fi
             ;;
     esac
 }

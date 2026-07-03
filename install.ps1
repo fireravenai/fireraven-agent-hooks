@@ -1,6 +1,7 @@
 param(
-    [ValidateSet("windsurf", "cursor", "claude", "copilot", "all")]
+    [ValidateSet("windsurf", "cursor", "claude", "github-copilot", "copilot", "all")]
     [string]$Agent = $(if ($env:FIRERAVEN_AGENT) { $env:FIRERAVEN_AGENT } else { "windsurf" }),
+    [switch]$Project,
     [string]$HooksRepo = $(if ($env:FIRERAVEN_HOOKS_REPO) { $env:FIRERAVEN_HOOKS_REPO } else { "fireravenai/fireraven-agent-hooks" }),
     [string]$HooksRef = $(if ($env:FIRERAVEN_HOOKS_REF) { $env:FIRERAVEN_HOOKS_REF } else { "main" })
 )
@@ -11,10 +12,12 @@ $Marker = "fireraven"
 $WindsurfScript = "windsurf_guardrail.py"
 $CursorScript = "cursor_guardrail.py"
 $ClaudeScript = "claude_guardrail.py"
+$GitHubCopilotScript = "github_copilot_guardrail.py"
 $WindsurfPreEvents = @("pre_user_prompt", "pre_run_command", "pre_mcp_tool_use", "pre_write_code", "pre_read_code")
 $WindsurfPostEvents = @("post_cascade_response", "post_write_code")
 $CursorEvents = @("beforeSubmitPrompt", "beforeShellExecution", "beforeMCPExecution", "beforeReadFile")
-$FireravenEntryPattern = "fireraven|windsurf_guardrail\.py|cursor_guardrail\.py|run_cursor_guardrail\.ps1|claude_guardrail\.py|fireraven_input_guardrail\.py"
+$GitHubCopilotEvents = @("userPromptSubmitted", "preToolUse", "postToolUse")
+$FireravenEntryPattern = "fireraven|windsurf_guardrail\.py|cursor_guardrail\.py|run_cursor_guardrail\.ps1|claude_guardrail\.py|fireraven_input_guardrail\.py|github_copilot_guardrail\.py|run_github_copilot_guardrail\.ps1"
 
 function Write-Info {
     param([string]$Message)
@@ -54,9 +57,20 @@ function Get-ClaudeInstallDir {
     return (Join-Path (Get-UserHome) ".claude")
 }
 
+function Get-GitHubCopilotInstallDir {
+    if ($env:FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR) {
+        return $env:FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR
+    }
+    return (Join-Path (Get-UserHome) ".copilot")
+}
+
 function Get-WindsurfHooksDir { Join-Path (Get-WindsurfInstallDir) "hooks" }
 function Get-CursorHooksDir { Join-Path (Get-CursorInstallDir) "hooks" }
 function Get-ClaudeHooksDir { Join-Path (Get-ClaudeInstallDir) "hooks" }
+function Get-GitHubCopilotHooksDir { Join-Path (Get-GitHubCopilotInstallDir) "hooks\fireraven" }
+function Get-GitHubCopilotHooksJson { Join-Path (Get-GitHubCopilotInstallDir) "hooks\fireraven-fireguard.json" }
+function Get-GitHubCopilotProjectHooksDir { Join-Path (Get-Location) ".github\hooks\fireraven" }
+function Get-GitHubCopilotProjectHooksJson { Join-Path (Get-Location) ".github\hooks\fireraven-fireguard.json" }
 
 function Test-CommandWorks {
     param(
@@ -198,7 +212,7 @@ function Copy-PackageTree {
         Copy-Item -Recurse -Force (Join-Path $SourceRoot $dir) $DestinationDir
     }
 
-    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
+    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "github_copilot_guardrail.py", "run_github_copilot_guardrail.ps1", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
         $source = Join-Path (Join-Path $SourceRoot "hooks") $file
         if (Test-Path $source) {
             Copy-Item -Force $source (Join-Path $DestinationDir $file)
@@ -234,12 +248,13 @@ function Download-PackageTree {
         "adapters/__init__.py",
         "adapters/windsurf.py",
         "adapters/cursor.py",
-        "adapters/claude.py"
+        "adapters/claude.py",
+        "adapters/github_copilot.py"
     )) {
         Download-File -Url "$RawBase/$path" -Destination (Join-Path $DestinationDir ($path -replace "/", "\"))
     }
 
-    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
+    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "github_copilot_guardrail.py", "run_github_copilot_guardrail.ps1", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
         Download-File -Url "$RawBase/hooks/$file" -Destination (Join-Path $DestinationDir $file)
     }
 }
@@ -412,6 +427,39 @@ function Merge-ClaudeSettingsJson {
     Write-Info "Registered Claude Code hooks in $settingsJson"
 }
 
+function Merge-GitHubCopilotHooksJson {
+    param(
+        [hashtable]$PythonCommand,
+        [string]$RawBase,
+        [ValidateSet("user", "project")]
+        [string]$Target = "user"
+    )
+
+    if ($Target -eq "project") {
+        $hooksJson = Get-GitHubCopilotProjectHooksJson
+        $scriptPath = ".github/hooks/fireraven/$GitHubCopilotScript"
+    }
+    else {
+        $hooksJson = Get-GitHubCopilotHooksJson
+        $scriptPath = Join-Path (Get-GitHubCopilotHooksDir) $GitHubCopilotScript
+    }
+
+    $bashCommand = "python3 $scriptPath"
+    $powershellCommand = New-PowerShellPythonCommand -PythonCommand $PythonCommand -ScriptPath $scriptPath
+
+    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -RawBase $RawBase -Arguments @(
+        "merge-github-copilot",
+        "--path", $hooksJson,
+        "--script-path", $scriptPath,
+        "--events", ($GitHubCopilotEvents -join " "),
+        "--owned-pattern", $FireravenEntryPattern,
+        "--bash-command", $bashCommand,
+        "--powershell-command", $powershellCommand,
+        "--cwd", "."
+    )
+    Write-Info "Registered GitHub Copilot hooks in $hooksJson"
+}
+
 function Install-Windsurf {
     param(
         [hashtable]$PythonCommand,
@@ -448,6 +496,32 @@ function Install-Claude {
     Merge-ClaudeSettingsJson -PythonCommand $PythonCommand -RawBase $RawBase
 }
 
+function Install-GitHubCopilot {
+    param(
+        [hashtable]$PythonCommand,
+        [string]$RawBase,
+        [ValidateSet("user", "project")]
+        [string]$Target = "user"
+    )
+
+    if ($Target -eq "project") {
+        $destination = Get-GitHubCopilotProjectHooksDir
+        Write-Info "Installing GitHub Copilot project hooks to $destination"
+    }
+    else {
+        $destination = Get-GitHubCopilotHooksDir
+        Write-Info "Installing GitHub Copilot hooks to $destination"
+    }
+
+    Install-PackageTree -DestinationDir $destination
+    Ensure-ConfigEnv -DestinationDir $destination
+    Merge-GitHubCopilotHooksJson -PythonCommand $PythonCommand -RawBase $RawBase -Target $Target
+
+    if ($Target -eq "project") {
+        Write-Warn "Commit .github/hooks/fireraven-fireguard.json and .github/hooks/fireraven/ to your default branch for Copilot cloud agent"
+    }
+}
+
 $pythonCommand = Get-PythonCommand
 $pythonText = (@($pythonCommand.FilePath) + @($pythonCommand.Arguments)) -join " "
 $rawBase = "https://raw.githubusercontent.com/$HooksRepo/refs/heads/$HooksRef"
@@ -459,12 +533,17 @@ switch ($Agent) {
         Install-Windsurf -PythonCommand $pythonCommand -RawBase $rawBase
         Install-Cursor -PythonCommand $pythonCommand -RawBase $rawBase
         Install-Claude -PythonCommand $pythonCommand -RawBase $rawBase
-        Write-Info "Copilot uses connector topics in adapters/copilot/ (no local hook install)"
+        Install-GitHubCopilot -PythonCommand $pythonCommand -RawBase $rawBase -Target user
+        Write-Info "Copilot Studio uses connector topics in adapters/copilot/ (see README)"
     }
     "windsurf" { Install-Windsurf -PythonCommand $pythonCommand -RawBase $rawBase }
     "cursor" { Install-Cursor -PythonCommand $pythonCommand -RawBase $rawBase }
     "claude" { Install-Claude -PythonCommand $pythonCommand -RawBase $rawBase }
-    "copilot" { Write-Info "Copilot uses connector topics in adapters/copilot/ (no local hook install)" }
+    "github-copilot" {
+        $target = if ($Project) { "project" } else { "user" }
+        Install-GitHubCopilot -PythonCommand $pythonCommand -RawBase $rawBase -Target $target
+    }
+    "copilot" { Write-Info "Copilot Studio uses connector topics in adapters/copilot/ (see README)" }
 }
 
 Write-Host ""

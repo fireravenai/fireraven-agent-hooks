@@ -33,6 +33,10 @@ def _default_claude_document() -> str:
   return '{\n  "hooks": {}\n}\n'
 
 
+def _default_github_copilot_document() -> str:
+  return '{\n  "version": 1,\n  "hooks": {}\n}\n'
+
+
 def _ensure_parent(path: str) -> None:
   parent = os.path.dirname(path)
   if parent:
@@ -123,6 +127,25 @@ def cmd_merge_claude(args: argparse.Namespace) -> None:
   )
 
 
+def cmd_merge_github_copilot(args: argparse.Namespace) -> None:
+  _ensure_parent(args.path)
+  entry = {
+    "type": "command",
+    "bash": args.bash_command or f"python3 {args.script_path}",
+    "powershell": args.powershell_command or f"py -3 {args.script_path}",
+    "cwd": args.cwd or ".",
+    "timeoutSec": args.timeout_sec,
+  }
+  _merge_events(
+    args.path,
+    _read_text(args.path),
+    args.events.split(),
+    entry,
+    args.owned_pattern.split("|"),
+    _default_github_copilot_document(),
+  )
+
+
 def cmd_scrub_windsurf(args: argparse.Namespace) -> None:
   _scrub_events(args.path, _read_text(args.path), args.events.split(), args.owned_pattern.split("|"))
 
@@ -133,6 +156,10 @@ def cmd_scrub_cursor(args: argparse.Namespace) -> None:
 
 def cmd_scrub_claude(args: argparse.Namespace) -> None:
   _scrub_events(args.path, _read_text(args.path), ["PreToolUse"], args.owned_pattern.split("|"))
+
+
+def cmd_scrub_github_copilot(args: argparse.Namespace) -> None:
+  _scrub_events(args.path, _read_text(args.path), args.events.split(), args.owned_pattern.split("|"))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -163,6 +190,16 @@ def build_parser() -> argparse.ArgumentParser:
   merge_claude.add_argument("--command", default="")
   merge_claude.set_defaults(func=cmd_merge_claude)
 
+  merge_github_copilot = sub.add_parser("merge-github-copilot")
+  add_common_merge_flags(merge_github_copilot)
+  merge_github_copilot.add_argument("--script-path", required=True)
+  merge_github_copilot.add_argument("--events", required=True)
+  merge_github_copilot.add_argument("--bash-command", default="")
+  merge_github_copilot.add_argument("--powershell-command", default="")
+  merge_github_copilot.add_argument("--cwd", default=".")
+  merge_github_copilot.add_argument("--timeout-sec", type=int, default=45)
+  merge_github_copilot.set_defaults(func=cmd_merge_github_copilot)
+
   scrub_windsurf = sub.add_parser("scrub-windsurf")
   scrub_windsurf.add_argument("--path", required=True)
   scrub_windsurf.add_argument("--events", required=True)
@@ -179,6 +216,12 @@ def build_parser() -> argparse.ArgumentParser:
   scrub_claude.add_argument("--path", required=True)
   scrub_claude.add_argument("--owned-pattern", required=True)
   scrub_claude.set_defaults(func=cmd_scrub_claude)
+
+  scrub_github_copilot = sub.add_parser("scrub-github-copilot")
+  scrub_github_copilot.add_argument("--path", required=True)
+  scrub_github_copilot.add_argument("--events", required=True)
+  scrub_github_copilot.add_argument("--owned-pattern", required=True)
+  scrub_github_copilot.set_defaults(func=cmd_scrub_github_copilot)
 
   return parser
 

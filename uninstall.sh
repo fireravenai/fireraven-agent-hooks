@@ -6,13 +6,17 @@ set -e
 FIRERAVEN_HOOKS_REPO="${FIRERAVEN_HOOKS_REPO:-fireravenai/fireraven-agent-hooks}"
 FIRERAVEN_HOOKS_REF="${FIRERAVEN_HOOKS_REF:-main}"
 FIRERAVEN_AGENT="${FIRERAVEN_AGENT:-all}"
+FIRERAVEN_PROJECT_INSTALL=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --agent) FIRERAVEN_AGENT="$2"; shift 2 ;;
+        --project) FIRERAVEN_PROJECT_INSTALL=1; shift ;;
         *) shift ;;
     esac
 done
+
+export FIRERAVEN_PROJECT_INSTALL
 
 load_lib() {
     SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || true)"

@@ -1,15 +1,17 @@
 param(
-    [ValidateSet("windsurf", "cursor", "claude", "copilot", "all")]
+    [ValidateSet("windsurf", "cursor", "claude", "github-copilot", "copilot", "all")]
     [string]$Agent = $(if ($env:FIRERAVEN_AGENT) { $env:FIRERAVEN_AGENT } else { "all" }),
+    [switch]$Project,
     [string]$HooksRepo = $(if ($env:FIRERAVEN_HOOKS_REPO) { $env:FIRERAVEN_HOOKS_REPO } else { "fireravenai/fireraven-agent-hooks" }),
     [string]$HooksRef = $(if ($env:FIRERAVEN_HOOKS_REF) { $env:FIRERAVEN_HOOKS_REF } else { "main" })
 )
 
 $ErrorActionPreference = "Stop"
 
-$FireravenEntryPattern = "fireraven|windsurf_guardrail\.py|cursor_guardrail\.py|run_cursor_guardrail\.ps1|claude_guardrail\.py|fireraven_input_guardrail\.py"
+$FireravenEntryPattern = "fireraven|windsurf_guardrail\.py|cursor_guardrail\.py|run_cursor_guardrail\.ps1|claude_guardrail\.py|fireraven_input_guardrail\.py|github_copilot_guardrail\.py|run_github_copilot_guardrail\.ps1"
 $WindsurfEvents = @("pre_user_prompt", "pre_run_command", "pre_mcp_tool_use", "pre_write_code", "pre_read_code", "post_cascade_response", "post_write_code")
 $CursorEvents = @("beforeSubmitPrompt", "beforeShellExecution", "beforeMCPExecution", "beforeReadFile")
+$GitHubCopilotEvents = @("userPromptSubmitted", "preToolUse", "postToolUse")
 
 function Write-Info {
     param([string]$Message)
@@ -47,6 +49,35 @@ function Get-ClaudeInstallDir {
         return $env:FIRERAVEN_CLAUDE_INSTALL_DIR
     }
     return (Join-Path (Get-UserHome) ".claude")
+}
+
+function Get-GitHubCopilotInstallDir {
+    if ($env:FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR) {
+        return $env:FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR
+    }
+    return (Join-Path (Get-UserHome) ".copilot")
+}
+
+function Get-GitHubCopilotHooksJson { Join-Path (Get-GitHubCopilotInstallDir) "hooks\fireraven-fireguard.json" }
+function Get-GitHubCopilotProjectHooksJson { Join-Path (Get-Location) ".github\hooks\fireraven-fireguard.json" }
+
+function Scrub-GitHubCopilotHooks {
+    param(
+        [hashtable]$PythonCommand,
+        [string]$RawBase,
+        [string]$HooksJson
+    )
+
+    if (-not (Test-Path $HooksJson)) {
+        return
+    }
+
+    Invoke-MergeHooksConfig -PythonCommand $pythonCommand -RawBase $rawBase -Arguments @(
+        "scrub-github-copilot",
+        "--path", $HooksJson,
+        "--events", ($GitHubCopilotEvents -join " "),
+        "--owned-pattern", $FireravenEntryPattern
+    )
 }
 
 function Test-CommandWorks {
@@ -159,7 +190,11 @@ switch ($Agent) {
             "--path", (Join-Path (Get-ClaudeInstallDir) "settings.json"),
             "--owned-pattern", $FireravenEntryPattern
         )
-        Write-Info "Copilot uses connector topics in adapters/copilot/ (no local hook install)"
+        Scrub-GitHubCopilotHooks -PythonCommand $pythonCommand -RawBase $rawBase -HooksJson (Get-GitHubCopilotHooksJson)
+        if ($Project) {
+            Scrub-GitHubCopilotHooks -PythonCommand $pythonCommand -RawBase $rawBase -HooksJson (Get-GitHubCopilotProjectHooksJson)
+        }
+        Write-Info "Copilot Studio uses connector topics in adapters/copilot/ (see README)"
     }
     "windsurf" {
         Invoke-MergeHooksConfig -PythonCommand $pythonCommand -RawBase $rawBase -Arguments @(
@@ -184,8 +219,14 @@ switch ($Agent) {
             "--owned-pattern", $FireravenEntryPattern
         )
     }
+    "github-copilot" {
+        Scrub-GitHubCopilotHooks -PythonCommand $pythonCommand -RawBase $rawBase -HooksJson (Get-GitHubCopilotHooksJson)
+        if ($Project) {
+            Scrub-GitHubCopilotHooks -PythonCommand $pythonCommand -RawBase $rawBase -HooksJson (Get-GitHubCopilotProjectHooksJson)
+        }
+    }
     "copilot" {
-        Write-Info "Copilot uses connector topics in adapters/copilot/ (no local hook install)"
+        Write-Info "Copilot Studio uses connector topics in adapters/copilot/ (see README)"
     }
 }
 

@@ -1,5 +1,7 @@
 # Microsoft Copilot Studio Integration
 
+> **Note:** This is **Microsoft Copilot Studio** (Power Platform connector topics), not **GitHub Copilot** CLI or cloud agent. For GitHub Copilot shell hooks, see [adapters/github_copilot/README.md](../github_copilot/README.md).
+
 Copilot does not use local shell hooks. FireGuard runs inside **Power Platform custom connector** topics.
 
 ## Prerequisites

@@ -1,5 +1,6 @@
 hooks/config.env
 **/config.env
+.github/hooks/fireraven/config.env
 state/
 __pycache__/
 *.pyc

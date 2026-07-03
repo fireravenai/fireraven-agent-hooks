@@ -12,7 +12,7 @@
   <img alt="GitHub Copilot" src="https://img.shields.io/badge/GitHub%20Copilot-guarded-24292F?style=for-the-badge&logo=githubcopilot&logoColor=white" />
 </p>
 
-FireGuard guardrails for AI coding agents: **Windsurf/Devin**, **Cursor**, **Claude Code**, and **Microsoft Copilot**.
+FireGuard guardrails for AI coding agents: **Windsurf/Devin**, **Cursor**, **Claude Code**, **GitHub Copilot**, and **Microsoft Copilot Studio**.
 
 Block secret leakage, dangerous execution, and data poisoning at the hook layer — before prompts, shell commands, MCP calls, and file writes reach your agent.
 
@@ -37,6 +37,20 @@ Install all supported local agents:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fireravenai/fireraven-agent-hooks/refs/heads/main/install.sh | sh -s -- --agent all
 ```
+
+Install GitHub Copilot hooks (user-level, for **Copilot CLI**):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fireravenai/fireraven-agent-hooks/refs/heads/main/install.sh | sh -s -- --agent github-copilot
+```
+
+Project-level (**Copilot cloud agent** on GitHub), from your repo root:
+
+```bash
+./fg install --agent github-copilot --project
+```
+
+> **GitHub Copilot vs Copilot Studio:** `--agent github-copilot` installs shell hooks for [Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli) and [Copilot cloud agent](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli). `--agent copilot` is **Microsoft Copilot Studio** (Power Platform topics) — a different product. This integration does **not** cover VS Code inline completions or Tab suggestions.
 
 Or use the CLI from a clone:
 
@@ -68,6 +82,12 @@ Install all supported local agents:
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/fireravenai/fireraven-agent-hooks/refs/heads/main/install.ps1))) -Agent all
 ```
 
+Install GitHub Copilot hooks:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/fireravenai/fireraven-agent-hooks/refs/heads/main/install.ps1))) -Agent github-copilot
+```
+
 Or use the installer from a clone:
 
 ```powershell
@@ -90,7 +110,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Agent windsurf
 | Windsurf / Devin | `--agent windsurf` or `-Agent windsurf` | `~/.codeium/windsurf/hooks.json` | pre-hooks (exit 2) |
 | Cursor | `--agent cursor` or `-Agent cursor` | `~/.cursor/hooks.json` | JSON `continue: false` for prompts, `permission: deny` for other hooks |
 | Claude Code | `--agent claude` | `~/.claude/settings.json` | PreToolUse (exit 2) |
-| Copilot | See [adapters/copilot/README.md](adapters/copilot/README.md) | Studio connector topics | Flow conditions |
+| GitHub Copilot | `--agent github-copilot` | `~/.copilot/hooks/fireraven-fireguard.json` or `.github/hooks/fireraven-fireguard.json` | `preToolUse` (`permissionDecision: deny`) |
+| Microsoft Copilot Studio | `--agent copilot` | Studio connector topics | Flow conditions |
 
 ## Hook events by platform
 
@@ -114,7 +135,37 @@ Denies via JSON rather than exit codes. `beforeSubmitPrompt` uses `{"continue": 
 
 Denies via exit code 2.
 
-### Microsoft Copilot
+### GitHub Copilot
+
+**Supported surfaces:** Copilot CLI (`~/.copilot/hooks/`) and Copilot cloud agent (`.github/hooks/` on the default branch). Not VS Code inline completions.
+
+**Input (audit):** `userPromptSubmitted` — runs FireGuard check; Copilot does not process hook output (cannot block prompts)
+
+**Input (blocking):** `preToolUse` — denies via `{"permissionDecision":"deny","permissionDecisionReason":"..."}`
+
+**Output (audit only):** `postToolUse`
+
+User CLI hooks: `~/.copilot/hooks/fireraven-fireguard.json`. Cloud agent hooks: `.github/hooks/fireraven-fireguard.json` on the default branch.
+
+**Getting started:**
+
+1. Install: `./fg install --agent github-copilot` (or `--project` from a repo root for cloud agent)
+2. Edit `~/.copilot/hooks/fireraven/config.env` (or `.github/hooks/fireraven/config.env`) with `FIRERAVEN_*` credentials
+3. Smoke-test the hook script directly (no IDE required):
+
+```bash
+echo '{"sessionId":"test","prompt":"hello"}' \
+  | python3 ~/.copilot/hooks/fireraven/github_copilot_guardrail.py
+
+echo '{"sessionId":"test","toolName":"bash","toolArgs":"{\"command\":\"rm -rf /\"}"}' \
+  | python3 ~/.copilot/hooks/fireraven/github_copilot_guardrail.py
+```
+
+4. End-to-end: run a Copilot CLI agent session or trigger a Copilot cloud agent job — blocking happens on **tool calls** (`preToolUse`), not on prompt submit
+
+See [adapters/github_copilot/README.md](adapters/github_copilot/README.md) for cloud agent prerequisites and Windows notes.
+
+### Microsoft Copilot Studio
 
 No local shell hooks. FireGuard runs in **Copilot Studio** topic flows:
 
@@ -170,7 +221,17 @@ The installer uses Cascade's Windows-specific `powershell` hook field, while kee
 
 ## Post-install
 
-Edit `config.env` in each agent's hooks directory (for example `~/.cursor/hooks/config.env`). Restart the IDE after changing it.
+Edit `config.env` in each agent's hooks directory:
+
+| Agent | `config.env` path |
+|-------|-------------------|
+| Cursor | `~/.cursor/hooks/config.env` |
+| Windsurf / Devin | `~/.codeium/windsurf/hooks/config.env` |
+| Claude Code | `~/.claude/hooks/config.env` |
+| GitHub Copilot (CLI) | `~/.copilot/hooks/fireraven/config.env` |
+| GitHub Copilot (cloud agent) | `.github/hooks/fireraven/config.env` (gitignored) |
+
+Restart your IDE or Copilot CLI after changing it.
 
 **Required:**
 
@@ -227,6 +288,8 @@ Restart your IDE(s) after editing `config.env`.
 | `FIRERAVEN_INSTALL_DIR` | `~/.codeium/windsurf` | Windsurf/Devin install dir |
 | `FIRERAVEN_CURSOR_INSTALL_DIR` | `~/.cursor` | Cursor install dir |
 | `FIRERAVEN_CLAUDE_INSTALL_DIR` | `~/.claude` | Claude Code install dir |
+| `FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR` | `~/.copilot` | GitHub Copilot CLI install dir |
+| `FIRERAVEN_PROJECT_INSTALL` | `0` | Set to `1` or pass `--project` for cloud agent project install |
 
 Hook runtime settings (`FIRERAVEN_GUARDRAILS_API_KEY`, `FIRERAVEN_EXECUTION_MODE`, `FIRERAVEN_FAIL_MODE`, and so on) belong in each agent's `hooks/config.env` file, not in the shell environment. See [Post-install](#post-install).
 

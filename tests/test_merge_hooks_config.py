@@ -15,9 +15,11 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 FIXTURE = REPO_ROOT / "tests" / "fixtures" / "hooks_cursor_with_comments.jsonc"
 OWNED_PATTERN = (
     "fireraven|windsurf_guardrail.py|cursor_guardrail.py|"
-    "run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py"
+    "run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|"
+    "github_copilot_guardrail.py|run_github_copilot_guardrail.ps1"
 )
 CURSOR_EVENTS = "beforeSubmitPrompt beforeShellExecution beforeMCPExecution beforeReadFile"
+GITHUB_COPILOT_EVENTS = "userPromptSubmitted preToolUse postToolUse"
 
 
 def _run_merge_cursor(path: Path, script_path: str) -> None:
@@ -50,6 +52,48 @@ def _run_scrub_cursor(path: Path) -> None:
             str(path),
             "--events",
             CURSOR_EVENTS,
+            "--owned-pattern",
+            OWNED_PATTERN,
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+
+def _run_merge_github_copilot(path: Path, script_path: str) -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "merge_hooks_config.py"),
+            "merge-github-copilot",
+            "--path",
+            str(path),
+            "--script-path",
+            script_path,
+            "--events",
+            GITHUB_COPILOT_EVENTS,
+            "--owned-pattern",
+            OWNED_PATTERN,
+            "--bash-command",
+            f"python3 {script_path}",
+            "--powershell-command",
+            f"py -3 {script_path}",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+
+def _run_scrub_github_copilot(path: Path) -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "merge_hooks_config.py"),
+            "scrub-github-copilot",
+            "--path",
+            str(path),
+            "--events",
+            GITHUB_COPILOT_EVENTS,
             "--owned-pattern",
             OWNED_PATTERN,
         ],
@@ -110,6 +154,35 @@ class MergeHooksConfigTests(unittest.TestCase):
         for line in self.original.splitlines():
             if line.lstrip().startswith("//"):
                 self.assertIn(line, scrubbed)
+
+
+class MergeGitHubCopilotHooksConfigTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.mkdtemp()
+        self.hooks_path = Path(self.temp_dir) / "fireraven-fireguard.json"
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_registers_github_copilot_hooks(self) -> None:
+        script_path = "/tmp/github_copilot_guardrail.py"
+        _run_merge_github_copilot(self.hooks_path, script_path)
+        data = json.loads(_strip_comments(self.hooks_path.read_text(encoding="utf-8")))
+        hooks = data["hooks"]
+        for event in GITHUB_COPILOT_EVENTS.split():
+            self.assertEqual(len(hooks[event]), 1)
+            entry = hooks[event][0]
+            self.assertEqual(entry["type"], "command")
+            self.assertIn("github_copilot_guardrail.py", entry["bash"])
+            self.assertEqual(entry["timeoutSec"], 45)
+
+    def test_idempotent_merge_and_scrub(self) -> None:
+        script_path = "/tmp/github_copilot_guardrail.py"
+        _run_merge_github_copilot(self.hooks_path, script_path)
+        _run_merge_github_copilot(self.hooks_path, script_path)
+        _run_scrub_github_copilot(self.hooks_path)
+        data = json.loads(_strip_comments(self.hooks_path.read_text(encoding="utf-8")))
+        self.assertEqual(data["hooks"], {})
 
 
 if __name__ == "__main__":

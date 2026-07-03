@@ -30,6 +30,15 @@ CURSOR_INPUT_EVENTS = {
     "preToolUse",
 }
 
+GITHUB_COPILOT_INPUT_EVENTS = {
+    "userPromptSubmitted",
+    "preToolUse",
+}
+
+GITHUB_COPILOT_OUTPUT_AUDIT_EVENTS = {
+    "postToolUse",
+}
+
 
 def local_sensitive_path_block(file_path: str) -> str | None:
     if SENSITIVE_PATH_RE.search(file_path):
@@ -133,6 +142,112 @@ def serialize_cursor(hook_event: str, payload: dict) -> str | None:
         if not tool_name and not tool_input:
             return None
         return f"Tool use: {tool_name}\n{json.dumps(tool_input, indent=2)}"
+
+    return None
+
+
+def _parse_tool_args(tool_args: object) -> object | None:
+    if tool_args is None:
+        return None
+    if isinstance(tool_args, str):
+        text = tool_args.strip()
+        if not text:
+            return None
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return text
+    return tool_args
+
+
+def _serialize_github_copilot_file_read(file_path: str) -> str | None:
+    if not file_path:
+        return None
+    blocked = local_sensitive_path_block(file_path)
+    if blocked:
+        return f"__LOCAL_BLOCK__:{blocked}"
+    snippet = ""
+    path = Path(file_path)
+    if path.is_file() and path.stat().st_size <= 32_000:
+        try:
+            snippet = path.read_text(encoding="utf-8", errors="replace")[:8_000]
+        except OSError:
+            snippet = ""
+    if snippet:
+        return f"File read request: {file_path}\n\nContent preview:\n{snippet}"
+    return f"File read request: {file_path}"
+
+
+def serialize_github_copilot(event: str, payload: dict) -> str | None:
+    if event == "userPromptSubmitted":
+        return (payload.get("prompt") or "").strip() or None
+
+    if event == "preToolUse":
+        tool_name = (payload.get("toolName") or payload.get("tool_name") or "").lower()
+        tool_args = _parse_tool_args(payload.get("toolArgs") or payload.get("tool_input"))
+
+        if tool_name in ("bash", "powershell"):
+            if isinstance(tool_args, dict):
+                command = (tool_args.get("command") or "").strip()
+                cwd = (tool_args.get("cwd") or payload.get("cwd") or "").strip()
+                if not command:
+                    return None
+                return f"Shell command to execute:\n{command}\n\nWorking directory:\n{cwd}"
+            return None
+
+        if tool_name == "view":
+            if isinstance(tool_args, dict):
+                file_path = (tool_args.get("path") or tool_args.get("file_path") or "").strip()
+                return _serialize_github_copilot_file_read(file_path)
+            return None
+
+        if tool_name in ("create", "write"):
+            if isinstance(tool_args, dict):
+                file_path = tool_args.get("path") or tool_args.get("file_path") or ""
+                content = tool_args.get("file_text") or tool_args.get("content") or ""
+                if not file_path and not content:
+                    return None
+                return f"File write request: {file_path}\n\n{content}".strip()
+            return None
+
+        if tool_name in ("edit", "str_replace_editor"):
+            if isinstance(tool_args, dict):
+                file_path = tool_args.get("path") or tool_args.get("file_path") or ""
+                old = tool_args.get("old_string") or tool_args.get("old_str") or ""
+                new = tool_args.get("new_string") or tool_args.get("new_str") or ""
+                if not file_path and not old and not new:
+                    return None
+                return (
+                    f"File edit request: {file_path}\n"
+                    f"--- old ---\n{old}\n--- new ---\n{new}"
+                )
+            return None
+
+        if tool_name == "apply_patch":
+            if isinstance(tool_args, dict):
+                patch = tool_args.get("patch") or tool_args.get("input") or ""
+                if not patch:
+                    return None
+                return f"Patch apply request:\n{patch}"
+            if isinstance(tool_args, str):
+                return f"Patch apply request:\n{tool_args.strip()}" or None
+            return None
+
+        display_name = payload.get("toolName") or payload.get("tool_name") or ""
+        if display_name or tool_args is not None:
+            return f"GitHub Copilot tool: {display_name}\n{json.dumps(tool_args, indent=2)}"
+        return None
+
+    if event == "postToolUse":
+        tool_result = payload.get("toolResult") or payload.get("tool_result") or {}
+        if isinstance(tool_result, dict):
+            text = (
+                tool_result.get("textResultForLlm")
+                or tool_result.get("text_result_for_llm")
+                or ""
+            )
+            return text.strip() or None
+        return None
 
     return None
 

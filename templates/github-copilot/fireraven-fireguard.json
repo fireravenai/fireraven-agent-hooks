@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "hooks": {
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "python3 PLACEHOLDER_SCRIPT_PATH",
+        "powershell": "py -3 PLACEHOLDER_SCRIPT_PATH",
+        "cwd": ".",
+        "timeoutSec": 45
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "python3 PLACEHOLDER_SCRIPT_PATH",
+        "powershell": "py -3 PLACEHOLDER_SCRIPT_PATH",
+        "cwd": ".",
+        "timeoutSec": 45
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "python3 PLACEHOLDER_SCRIPT_PATH",
+        "powershell": "py -3 PLACEHOLDER_SCRIPT_PATH",
+        "cwd": ".",
+        "timeoutSec": 45
+      }
+    ]
+  }
+}
