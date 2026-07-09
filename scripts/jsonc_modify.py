@@ -354,8 +354,7 @@ def ensure_top_level_version(text: str, root: Node) -> tuple[str, list[Edit]]:
   property_text = f'\n{indent}"version": 1'
   if not root.children:
     return text, [Edit(root.start + 1, 0, property_text)]
-  first_key, first_value = root.children[0]
-  return text, [Edit(first_value.start, 0, property_text + ",")]
+  return text, [Edit(root.start + 1, 0, property_text + ",")]
 
 
 def strip_comments_for_parse(text: str) -> str:

@@ -290,5 +290,44 @@ class MergeClaudeHooksConfigTests(unittest.TestCase):
         self.assertEqual(scrubbed["hooks"], {})
 
 
+    def test_merge_claude_preserves_existing_settings_without_version(self) -> None:
+        script_path = "/home/debian/.claude/hooks/claude_guardrail.py"
+        command = f"python3 {script_path}"
+        self.settings_path.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [
+                            {
+                                "matcher": "Bash",
+                                "hooks": [{"type": "command", "command": "rtk hook claude"}],
+                            }
+                        ]
+                    },
+                    "theme": "dark",
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        _run_merge_claude(self.settings_path, script_path)
+
+        data = json.loads(_strip_comments(self.settings_path.read_text(encoding="utf-8")))
+        self.assertEqual(data["version"], 1)
+        self.assertEqual(data["theme"], "dark")
+
+        pretool_entries = data["hooks"]["PreToolUse"]
+        self.assertEqual(len(pretool_entries), 2)
+        matchers = {entry["matcher"] for entry in pretool_entries}
+        self.assertEqual(matchers, {"Bash", ".*"})
+        fireraven_pretool = next(entry for entry in pretool_entries if entry["matcher"] == ".*")
+        self.assertEqual(fireraven_pretool["hooks"][0]["command"], command)
+
+        self.assertEqual(len(data["hooks"]["UserPromptSubmit"]), 1)
+        self.assertEqual(data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], command)
+
+
 if __name__ == "__main__":
     unittest.main()
