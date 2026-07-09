@@ -4,7 +4,8 @@ import os
 from pathlib import Path
 
 DEFAULT_API_URL = "https://api.fireraven.ai"
-DEFAULT_EXECUTION_MODE = "fast"
+DEFAULT_EXECUTION_MODE = "normal"
+DEFAULT_FAIL_MODE = "open"
 DEFAULT_TIMEOUT_SEC = 15
 
 
@@ -52,7 +53,7 @@ def resolve_settings(config: dict[str, str]) -> dict[str, str | float]:
     project_id = get_setting(config, "FIRERAVEN_PROJECT_ID")
     api_url = get_setting(config, "FIRERAVEN_API_URL", DEFAULT_API_URL)
     execution_mode = get_setting(config, "FIRERAVEN_EXECUTION_MODE", DEFAULT_EXECUTION_MODE)
-    fail_mode = get_setting(config, "FIRERAVEN_FAIL_MODE", "closed").lower()
+    fail_mode = get_setting(config, "FIRERAVEN_FAIL_MODE", DEFAULT_FAIL_MODE).lower()
 
     return {
         "api_key": api_key,

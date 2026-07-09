@@ -30,7 +30,7 @@ def _default_windsurf_document() -> str:
 
 
 def _default_claude_document() -> str:
-  return '{\n  "hooks": {}\n}\n'
+  return '{\n  "version": 1,\n  "hooks": {}\n}\n'
 
 
 def _default_github_copilot_document() -> str:
@@ -110,21 +110,28 @@ def cmd_merge_cursor(args: argparse.Namespace) -> None:
   )
 
 
+CLAUDE_OWNED_MARKERS = ["fireraven", "claude_guardrail.py"]
+
+
 def cmd_merge_claude(args: argparse.Namespace) -> None:
   _ensure_parent(args.path)
   command = args.command or f"python3 {args.script_path}"
-  entry = {
+  pretool_entry = {
     "matcher": ".*",
     "hooks": [{"type": "command", "command": command}],
   }
-  _merge_events(
-    args.path,
-    _read_text(args.path),
-    ["PreToolUse"],
-    entry,
-    ["fireraven"],
-    _default_claude_document(),
-  )
+  prompt_entry = {
+    "hooks": [{"type": "command", "command": command}],
+  }
+  text = _read_text(args.path)
+  if not text.strip():
+    text = _default_claude_document()
+  for event, entry in [("PreToolUse", pretool_entry), ("UserPromptSubmit", prompt_entry)]:
+    try:
+      text = merge_hook_array(text, ["hooks", event], entry, CLAUDE_OWNED_MARKERS)
+    except JsoncModifyError as exc:
+      _fail(args.path, exc)
+  write_jsonc_file(args.path, text)
 
 
 def cmd_merge_github_copilot(args: argparse.Namespace) -> None:
@@ -155,7 +162,12 @@ def cmd_scrub_cursor(args: argparse.Namespace) -> None:
 
 
 def cmd_scrub_claude(args: argparse.Namespace) -> None:
-  _scrub_events(args.path, _read_text(args.path), ["PreToolUse"], args.owned_pattern.split("|"))
+  _scrub_events(
+    args.path,
+    _read_text(args.path),
+    ["PreToolUse", "UserPromptSubmit"],
+    args.owned_pattern.split("|"),
+  )
 
 
 def cmd_scrub_github_copilot(args: argparse.Namespace) -> None:

@@ -147,6 +147,12 @@ function New-CursorDirectHookCommand {
     return "py -3 hooks/cursor_guardrail.py"
 }
 
+function New-ClaudeDirectHookCommand {
+    param([string]$ScriptPath)
+    $normalized = $ScriptPath -replace '\\', '/'
+    return "py -3 $normalized"
+}
+
 function New-PortablePythonCommand {
     param([string]$ScriptPath)
     return "python3 `"$ScriptPath`""
@@ -416,13 +422,12 @@ function Merge-ClaudeSettingsJson {
 
     $settingsJson = Join-Path (Get-ClaudeInstallDir) "settings.json"
     $scriptPath = Join-Path (Get-ClaudeHooksDir) $ClaudeScript
-    $pythonInvocation = New-PythonInvocation -PythonCommand $PythonCommand -ScriptPath $scriptPath
 
     Invoke-MergeHooksConfig -PythonCommand $PythonCommand -RawBase $RawBase -Arguments @(
         "merge-claude",
         "--path", $settingsJson,
         "--script-path", $scriptPath,
-        "--command", (New-CursorHookCommand -PythonInvocation $pythonInvocation)
+        "--command", (New-ClaudeDirectHookCommand -ScriptPath $scriptPath)
     )
     Write-Info "Registered Claude Code hooks in $settingsJson"
 }

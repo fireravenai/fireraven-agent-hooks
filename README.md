@@ -109,7 +109,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Agent windsurf
 |-------|---------|-------------|----------|
 | Windsurf / Devin | `--agent windsurf` or `-Agent windsurf` | `~/.codeium/windsurf/hooks.json` | pre-hooks (exit 2) |
 | Cursor | `--agent cursor` or `-Agent cursor` | `~/.cursor/hooks.json` | JSON `continue: false` for prompts, `permission: deny` for other hooks |
-| Claude Code | `--agent claude` | `~/.claude/settings.json` | PreToolUse (exit 2) |
+| Claude Code | `--agent claude` | `~/.claude/settings.json` | `PreToolUse` + `UserPromptSubmit` (exit 2) |
 | GitHub Copilot | `--agent github-copilot` | `~/.copilot/hooks/fireraven-fireguard.json` or `.github/hooks/fireraven-fireguard.json` | `preToolUse` (`permissionDecision: deny`) |
 | Microsoft Copilot Studio | `--agent copilot` | Studio connector topics | Flow conditions |
 
@@ -131,9 +131,9 @@ Denies via JSON rather than exit codes. `beforeSubmitPrompt` uses `{"continue": 
 
 ### Claude Code
 
-**Input (blocking):** `PreToolUse` (matcher `.*` — all tools)
+**Input (blocking):** `PreToolUse` (matcher `.*` — all tools) and `UserPromptSubmit` (typed prompts, no matcher)
 
-Denies via exit code 2.
+Denies via exit code 2. Prompts and tool calls reach FireGuard; conversations appear in the dashboard even when no tools run.
 
 ### GitHub Copilot
 
@@ -210,12 +210,34 @@ Devin Desktop uses the Windsurf/Cascade hook configuration format. The PowerShel
 
 The installer uses Cascade's Windows-specific `powershell` hook field, while keeping the hook registration in the normal Devin/Windsurf user-level config file. The adapter still follows Cascade's exit-code blocking behavior. Restart Devin Desktop or Windsurf after editing `config.env`.
 
+### Claude Code on Windows
+
+The PowerShell installer writes:
+
+| File | Purpose |
+|------|---------|
+| `%USERPROFILE%\.claude\settings.json` | Claude Code hook registration |
+| `%USERPROFILE%\.claude\hooks\` | Fireraven hook scripts and config |
+| `%USERPROFILE%\.claude\hooks\config.env` | Fireraven credentials |
+
+Claude Code runs hook commands through a POSIX shell (Git Bash), not PowerShell. The installer registers hooks as a direct `py -3` call with a forward-slash absolute path to `claude_guardrail.py` — for example `py -3 C:/Users/you/.claude/hooks/claude_guardrail.py`. Do **not** wrap hooks in PowerShell with `$input`; Git Bash expands `$input` to empty, PowerShell fails to parse the pipe, and Claude Code silently allows tools through unguarded.
+
+Piping a PowerShell string into Python can add a UTF-8 BOM and break JSON parsing; the direct `py -3` command avoids that because stdin arrives as clean UTF-8.
+
+**Verify after install:**
+
+1. Trigger a tool call in Claude Code — a session file should appear under `%USERPROFILE%\.claude\hooks\state\`.
+2. Submit a benign chat prompt — it should proceed normally.
+3. Submit a policy-violating prompt — Claude Code should block it with a `UserPromptSubmit` hook error before responding.
+4. Confirm a "Claude Code" conversation appears in the FireGuard dashboard (including prompt-only sessions with no tools).
+
 ### Windows troubleshooting
 
 - If PowerShell blocks the script, run the local clone command with `-ExecutionPolicy Bypass`.
 - If Python is missing, install Python 3 and enable **Add python.exe to PATH**, or use the Python launcher so `py -3 --version` works.
 - If Cursor hooks do not run, open **View > Output > Hooks** and confirm the command is `py -3 hooks/cursor_guardrail.py`, or switch to the `run_cursor_guardrail.ps1` fallback above.
 - If Devin/Windsurf hooks do not run, confirm `%USERPROFILE%\.codeium\windsurf\hooks.json` contains a direct Python `powershell` field for each Fireraven hook event.
+- If Claude Code hooks do not run, confirm `%USERPROFILE%\.claude\settings.json` uses direct `py -3 C:/.../claude_guardrail.py` commands (no `powershell` wrapper) for both `PreToolUse` and `UserPromptSubmit`.
 - If credentials fail, edit the `config.env` file under the installed agent's `hooks` directory and restart the IDE.
 - If install fails with a JSONC parse error on `hooks.json`, fix syntax errors in the file (comments alone are supported). The installer preserves `//` comments and non-Fireraven hook entries.
 
@@ -244,9 +266,9 @@ FIRERAVEN_PROJECT_ID=<your-project-id>
 
 ```env
 FIRERAVEN_API_URL=https://api.fireraven.ai
-FIRERAVEN_EXECUTION_MODE=fast
+FIRERAVEN_EXECUTION_MODE=normal
 FIRERAVEN_REQUEST_TIMEOUT_SEC=15
-FIRERAVEN_FAIL_MODE=closed
+FIRERAVEN_FAIL_MODE=open
 ```
 
 ### `config.env` reference
@@ -256,16 +278,16 @@ FIRERAVEN_FAIL_MODE=closed
 | `FIRERAVEN_GUARDRAILS_API_KEY` | *(none)* | FireGuard API key. Required. |
 | `FIRERAVEN_PROJECT_ID` | *(none)* | FireGuard project ID. Required. |
 | `FIRERAVEN_API_URL` | `https://api.fireraven.ai` | FireGuard API base URL. |
-| `FIRERAVEN_EXECUTION_MODE` | `fast` | How each guardrail check runs on the FireGuard API. See below. |
+| `FIRERAVEN_EXECUTION_MODE` | `normal` | How each guardrail check runs on the FireGuard API. See below. |
 | `FIRERAVEN_REQUEST_TIMEOUT_SEC` | `15` | HTTP timeout in seconds for FireGuard requests. |
-| `FIRERAVEN_FAIL_MODE` | `closed` | Hook behavior when FireGuard is unreachable. See below. |
+| `FIRERAVEN_FAIL_MODE` | `open` | Hook behavior when FireGuard is unreachable. See below. |
 
 #### `FIRERAVEN_EXECUTION_MODE`
 
 | Value | When to use |
 |-------|-------------|
-| `fast` | **Default.** Lower latency for IDE hooks. FireGuard runs eligible checks in parallel and returns as soon as a blocking result is known. |
-| `normal` | Stricter, higher-latency checks. FireGuard runs guardrails sequentially and returns full policy and security details. |
+| `fast` | Lower latency for IDE hooks. FireGuard runs eligible checks in parallel and returns as soon as a blocking result is known. |
+| `normal` | **Default.** Full sequential checks with complete policy and security details. |
 
 This value is sent as `execution_mode` on each input and output guardrail API call. It can differ from your project's default execution mode in the Fireraven app.
 
@@ -273,8 +295,8 @@ This value is sent as `execution_mode` on each input and output guardrail API ca
 
 | Value | When to use |
 |-------|-------------|
-| `closed` | **Default.** Block the agent action when the hook cannot reach FireGuard (network error, timeout, HTTP error). Use for production enforcement. |
-| `open` | Allow the agent action through on transient FireGuard API failures. Policy violations and missing `FIRERAVEN_*` credentials still block. |
+| `closed` | Block the agent action when the hook cannot reach FireGuard (network error, timeout, HTTP error). Use for strict production enforcement. |
+| `open` | **Default.** Allow the agent action through on transient FireGuard API failures. Policy violations and missing `FIRERAVEN_*` credentials still block. |
 
 Restart your IDE(s) after editing `config.env`.
 

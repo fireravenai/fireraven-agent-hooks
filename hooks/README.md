@@ -9,7 +9,7 @@ Installed to each agent's hooks directory (e.g. `~/.codeium/windsurf/hooks/`).
 | `windsurf_guardrail.py` | Windsurf / Devin | `hooks.json` pre/post events |
 | `cursor_guardrail.py` | Cursor | `hooks.json` before* events |
 | `run_cursor_guardrail.ps1` | Cursor on Windows | Optional raw-stdin PowerShell fallback |
-| `claude_guardrail.py` | Claude Code | `settings.json` PreToolUse |
+| `claude_guardrail.py` | Claude Code | `settings.json` PreToolUse + UserPromptSubmit |
 | `github_copilot_guardrail.py` | GitHub Copilot | `fireraven-fireguard.json` userPromptSubmitted / preToolUse / postToolUse |
 | `run_github_copilot_guardrail.ps1` | GitHub Copilot on Windows | Optional raw-stdin PowerShell fallback |
 | `fireraven_input_guardrail.py` | Windsurf | Backward-compatible alias |
@@ -49,24 +49,24 @@ FIRERAVEN_PROJECT_ID=<your-project-id>
 
 ```env
 FIRERAVEN_API_URL=https://api.fireraven.ai
-FIRERAVEN_EXECUTION_MODE=fast
+FIRERAVEN_EXECUTION_MODE=normal
 FIRERAVEN_REQUEST_TIMEOUT_SEC=15
-FIRERAVEN_FAIL_MODE=closed
+FIRERAVEN_FAIL_MODE=open
 ```
 
 ### `FIRERAVEN_EXECUTION_MODE`
 
 | Value | Default | Behavior |
 |-------|---------|----------|
-| `fast` | yes | Lower latency. FireGuard runs eligible checks in parallel and returns as soon as a blocking result is known. |
-| `normal` | | Full sequential checks with complete policy and security details. |
+| `fast` | | Lower latency. FireGuard runs eligible checks in parallel and returns as soon as a blocking result is known. |
+| `normal` | yes | Full sequential checks with complete policy and security details. |
 
 ### `FIRERAVEN_FAIL_MODE`
 
 | Value | Default | Behavior |
 |-------|---------|----------|
-| `closed` | yes | Block the agent action when the hook cannot reach FireGuard (network, timeout, or HTTP error). |
-| `open` | | Allow the action through on transient FireGuard API failures. Policy violations and missing credentials still block. |
+| `closed` | | Block the agent action when the hook cannot reach FireGuard (network, timeout, or HTTP error). |
+| `open` | yes | Allow the action through on transient FireGuard API failures. Policy violations and missing credentials still block. |
 
 See [config.example.env](config.example.env) for inline comments.
 
@@ -98,6 +98,26 @@ PowerShell:
 
 ```powershell
 '{"hook_event_name":"beforeSubmitPrompt","conversation_id":"test-001","prompt":"hello"}' | py -3 .\cursor_guardrail.py
+```
+
+## Manual test (Claude Code)
+
+Claude Code hooks deny via exit code 2. `PreToolUse` screens tool calls; `UserPromptSubmit` screens typed prompts before Claude processes them.
+
+```bash
+echo '{"session_id":"test-001","tool_name":"Bash","tool_input":{"command":"echo hi"}}' \
+  | python3 claude_guardrail.py
+
+echo '{"session_id":"test-001","hook_event_name":"UserPromptSubmit","prompt":"hello"}' \
+  | python3 claude_guardrail.py
+```
+
+PowerShell:
+
+```powershell
+'{"session_id":"test-001","tool_name":"Bash","tool_input":{"command":"echo hi"}}' | py -3 .\claude_guardrail.py
+
+'{"session_id":"test-001","hook_event_name":"UserPromptSubmit","prompt":"hello"}' | py -3 .\claude_guardrail.py
 ```
 
 Fallback wrapper from `%USERPROFILE%\.cursor`:
