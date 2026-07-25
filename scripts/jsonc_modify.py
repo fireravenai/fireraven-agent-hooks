@@ -263,7 +263,7 @@ def _remove_trailing_comma_ws(text: str, start: int, end: int) -> tuple[int, int
     return start, index
   # remove leading comma from previous item
   prev = start - 1
-  while prev >= 0 and text[prev] in " \t":
+  while prev >= 0 and text[prev] in " \t\n\r":
     prev -= 1
   if prev >= 0 and text[prev] == ",":
     return prev, end

@@ -7,9 +7,9 @@ Installed to each agent's hooks directory (e.g. `~/.codeium/windsurf/hooks/`).
 | Script | Agent | Invoked by |
 |--------|-------|------------|
 | `windsurf_guardrail.py` | Windsurf / Devin | `hooks.json` pre/post events |
-| `cursor_guardrail.py` | Cursor | `hooks.json` before* events |
+| `cursor_guardrail.py` | Cursor | `hooks.json` before* / preToolUse / subagentStart / afterFileEdit |
 | `run_cursor_guardrail.ps1` | Cursor on Windows | Optional raw-stdin PowerShell fallback |
-| `claude_guardrail.py` | Claude Code | `settings.json` PreToolUse + UserPromptSubmit |
+| `claude_guardrail.py` | Claude Code | `settings.json` PreToolUse + UserPromptSubmit + PostToolUse(Read) |
 | `github_copilot_guardrail.py` | GitHub Copilot | `fireraven-fireguard.json` userPromptSubmitted / preToolUse / postToolUse |
 | `run_github_copilot_guardrail.ps1` | GitHub Copilot on Windows | Optional raw-stdin PowerShell fallback |
 | `fireraven_input_guardrail.py` | Windsurf | Backward-compatible alias |
@@ -87,7 +87,7 @@ $LASTEXITCODE
 
 ## Manual test (Cursor)
 
-Cursor hooks must print a JSON decision to stdout. With `config.env` present, `beforeSubmitPrompt` should return `{"continue":true}` or `{"continue":false,...}`. Other Cursor events should return `{"permission":"allow"}` or `{"permission":"deny",...}`.
+Cursor hooks must print a JSON decision to stdout. With `config.env` present, `beforeSubmitPrompt` should return `{"continue":true}` or `{"continue":false,...}`. Other Cursor events should return `{"permission":"allow"}` or `{"permission":"deny",...}`. On a FireGuard policy deny for shell/MCP/read/write/subagent, the hook may show an OS Allow/Deny dialog before deciding.
 
 ```bash
 echo '{"hook_event_name":"beforeSubmitPrompt","conversation_id":"test-001","prompt":"hello"}' \
@@ -102,10 +102,10 @@ PowerShell:
 
 ## Manual test (Claude Code)
 
-Claude Code hooks deny via exit code 2. `PreToolUse` screens tool calls; `UserPromptSubmit` screens typed prompts before Claude processes them.
+Claude Code `UserPromptSubmit` denies via exit code 2. `PreToolUse` policy violations return JSON `permissionDecision: "ask"` (exit 0) so the IDE can prompt the user. Local sensitive-path blocks still use exit 2. `PostToolUse`/`Read` is audit-only.
 
 ```bash
-echo '{"session_id":"test-001","tool_name":"Bash","tool_input":{"command":"echo hi"}}' \
+echo '{"session_id":"test-001","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo hi"}}' \
   | python3 claude_guardrail.py
 
 echo '{"session_id":"test-001","hook_event_name":"UserPromptSubmit","prompt":"hello"}' \
@@ -115,7 +115,7 @@ echo '{"session_id":"test-001","hook_event_name":"UserPromptSubmit","prompt":"he
 PowerShell:
 
 ```powershell
-'{"session_id":"test-001","tool_name":"Bash","tool_input":{"command":"echo hi"}}' | py -3 .\claude_guardrail.py
+'{"session_id":"test-001","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo hi"}}' | py -3 .\claude_guardrail.py
 
 '{"session_id":"test-001","hook_event_name":"UserPromptSubmit","prompt":"hello"}' | py -3 .\claude_guardrail.py
 ```

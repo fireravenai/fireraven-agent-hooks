@@ -15,7 +15,7 @@ $ClaudeScript = "claude_guardrail.py"
 $GitHubCopilotScript = "github_copilot_guardrail.py"
 $WindsurfPreEvents = @("pre_user_prompt", "pre_run_command", "pre_mcp_tool_use", "pre_write_code", "pre_read_code")
 $WindsurfPostEvents = @("post_cascade_response", "post_write_code")
-$CursorEvents = @("beforeSubmitPrompt", "beforeShellExecution", "beforeMCPExecution", "beforeReadFile")
+$CursorEvents = @("beforeSubmitPrompt", "beforeShellExecution", "beforeMCPExecution", "beforeReadFile", "preToolUse", "subagentStart", "afterFileEdit")
 $GitHubCopilotEvents = @("userPromptSubmitted", "preToolUse", "postToolUse")
 $FireravenEntryPattern = "fireraven|windsurf_guardrail\.py|cursor_guardrail\.py|run_cursor_guardrail\.ps1|claude_guardrail\.py|fireraven_input_guardrail\.py|github_copilot_guardrail\.py|run_github_copilot_guardrail\.ps1"
 
@@ -251,6 +251,7 @@ function Download-PackageTree {
         "core/fireraven_client.py",
         "core/serializers.py",
         "core/guardrail.py",
+        "core/human_override.py",
         "adapters/__init__.py",
         "adapters/windsurf.py",
         "adapters/cursor.py",

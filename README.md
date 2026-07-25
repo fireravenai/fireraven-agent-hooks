@@ -108,8 +108,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Agent windsurf
 | Agent | Install | Hook config | Blocking |
 |-------|---------|-------------|----------|
 | Windsurf / Devin | `--agent windsurf` or `-Agent windsurf` | `~/.codeium/windsurf/hooks.json` | pre-hooks (exit 2) |
-| Cursor | `--agent cursor` or `-Agent cursor` | `~/.cursor/hooks.json` | JSON `continue: false` for prompts, `permission: deny` for other hooks |
-| Claude Code | `--agent claude` | `~/.claude/settings.json` | `PreToolUse` + `UserPromptSubmit` (exit 2) |
+| Cursor | `--agent cursor` or `-Agent cursor` | `~/.cursor/hooks.json` | JSON deny for prompts; OS dialog override for tool/shell/MCP/read/subagent blocks |
+| Claude Code | `--agent claude` | `~/.claude/settings.json` | `PreToolUse` ask-on-policy + `UserPromptSubmit` exit 2; `PostToolUse`/`Read` audit |
 | GitHub Copilot | `--agent github-copilot` | `~/.copilot/hooks/fireraven-fireguard.json` or `.github/hooks/fireraven-fireguard.json` | `preToolUse` (`permissionDecision: deny`) |
 | Microsoft Copilot Studio | `--agent copilot` | Studio connector topics | Flow conditions |
 
@@ -123,17 +123,25 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Agent windsurf
 
 ### Cursor
 
-**Input (blocking):** `beforeSubmitPrompt`, `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile`
+**Input (blocking):** `beforeSubmitPrompt`, `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile` (path + file body), `preToolUse` (matcher `Write`), `subagentStart`
+
+**Output (audit only):** `afterFileEdit` (written hunks; cannot undo)
 
 Denies via JSON rather than exit codes. `beforeSubmitPrompt` uses `{"continue": false}`; other Cursor events use `{"permission": "deny"}`.
 
-`~/.cursor/hooks.json` may use JSONC (`//` or `/* */` comments). The installer merges Fireraven hook entries with surgical edits so existing comments, indentation, and third-party hooks (for example `preToolUse`) are preserved. Commented-out hook blocks stay commented; the installer adds live Fireraven entries separately.
+**Human override:** On FireGuard policy/security violations for tool/shell/MCP/read/subagent gates, the hook shows a blocking OS confirmation dialog (zenity/kdialog on Linux, osascript on macOS, MessageBox on Windows). Allow continues once for that action; Deny/timeout/no-display keeps the deny. Local sensitive-path blocks (`.env`, keys, etc.) and missing credentials are **not** overridable. Prompt blocks stay hard deny (edit the prompt). Cursor’s native `permission: "ask"` is not used — it is not reliably enforced today.
+
+`~/.cursor/hooks.json` may use JSONC (`//` or `/* */` comments). The installer merges Fireraven hook entries with surgical edits so existing comments, indentation, and third-party hooks (for example other `preToolUse` matchers) are preserved. Commented-out hook blocks stay commented; the installer adds live Fireraven entries separately.
 
 ### Claude Code
 
-**Input (blocking):** `PreToolUse` (matcher `.*` — all tools) and `UserPromptSubmit` (typed prompts, no matcher)
+**Input (blocking):** `PreToolUse` (matcher `.*` — all tools, including Write/Edit content, MCP as `mcp__…`, and Agent subagent prompts) and `UserPromptSubmit` (typed prompts, no matcher)
 
-Denies via exit code 2. Prompts and tool calls reach FireGuard; conversations appear in the dashboard even when no tools run.
+**Output (audit only):** `PostToolUse` (matcher `Read`) — screens read body after the tool ran; cannot undo; warns via `systemMessage` / `additionalContext`
+
+**Human override:** On FireGuard policy/security violations for `PreToolUse`, the hook returns `permissionDecision: "ask"` so Claude Code’s UI prompts the user to Allow/Deny. That click is the override (no config flip). `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks and missing credentials are not overridable.
+
+`FileChanged` and `SubagentStart` are not registered as guardrail gates (`SubagentStart` cannot block; Agent prompts are already covered by `PreToolUse`).
 
 ### GitHub Copilot
 

@@ -5,7 +5,43 @@ import sys
 
 from core.config import load_config, resolve_settings
 from core.guardrail import GuardrailError, run_input_check
-from core.serializers import serialize_claude
+from core.human_override import log_override_audit
+from core.serializers import infer_claude_event, serialize_claude
+
+
+def _ask_pretool(message: str) -> None:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason": message,
+                }
+            }
+        )
+    )
+    sys.exit(0)
+
+
+def _deny_exit(message: str) -> None:
+    print(message, file=sys.stderr)
+    sys.exit(2)
+
+
+def _post_tool_warn(message: str) -> None:
+    print(
+        json.dumps(
+            {
+                "systemMessage": message,
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": message,
+                },
+            }
+        )
+    )
+    sys.exit(0)
 
 
 def main() -> None:
@@ -15,6 +51,7 @@ def main() -> None:
         print(f"Fireraven guardrail hook: invalid hook input JSON ({exc}).", file=sys.stderr)
         sys.exit(2)
 
+    hook_event = infer_claude_event(hook_input)
     text = serialize_claude(hook_input)
     if not text:
         sys.exit(0)
@@ -33,11 +70,41 @@ def main() -> None:
         print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
         sys.exit(2)
 
+    if hook_event == "PostToolUse":
+        try:
+            run_input_check(session_id, text, label="Claude Code")
+        except GuardrailError as exc:
+            print(
+                json.dumps(
+                    {
+                        "session_id": session_id,
+                        "event": "PostToolUse",
+                        "is_safe": False,
+                        "message": str(exc),
+                    }
+                ),
+                file=sys.stderr,
+            )
+            _post_tool_warn(str(exc))
+        except Exception as exc:
+            if settings["fail_closed"]:
+                print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
+                _post_tool_warn(f"Fireraven guardrail hook: {exc}")
+        sys.exit(0)
+
     try:
         run_input_check(session_id, text, label="Claude Code")
     except GuardrailError as exc:
-        print(str(exc), file=sys.stderr)
-        sys.exit(2)
+        message = str(exc)
+        if hook_event == "PreToolUse" and exc.overridable:
+            log_override_audit(
+                session_id=session_id,
+                event=hook_event,
+                decision="ask",
+                message=message,
+            )
+            _ask_pretool(message)
+        _deny_exit(message)
     except Exception as exc:
         if settings["fail_closed"]:
             print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)

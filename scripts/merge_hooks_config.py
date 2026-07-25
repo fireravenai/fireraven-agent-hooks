@@ -82,6 +82,17 @@ def _scrub_events(path: str, text: str, events: list[str], owned_markers: list[s
   write_jsonc_file(path, text)
 
 
+CLAUDE_OWNED_MARKERS = ["fireraven", "claude_guardrail.py"]
+CLAUDE_EVENTS = ["PreToolUse", "UserPromptSubmit", "PostToolUse"]
+
+# Per-event Cursor hook fields (matcher / failClosed) merged into each entry.
+CURSOR_EVENT_OPTIONS: dict[str, dict] = {
+  "beforeReadFile": {"failClosed": True},
+  "beforeMCPExecution": {"failClosed": True},
+  "preToolUse": {"matcher": "Write", "failClosed": True},
+}
+
+
 def cmd_merge_windsurf(args: argparse.Namespace) -> None:
   _ensure_parent(args.path)
   entry = {"command": f"python3 {args.script_path}"}
@@ -99,18 +110,19 @@ def cmd_merge_windsurf(args: argparse.Namespace) -> None:
 
 def cmd_merge_cursor(args: argparse.Namespace) -> None:
   _ensure_parent(args.path)
-  entry = {"command": args.command or f"python3 {args.script_path}"}
-  _merge_events(
-    args.path,
-    _read_text(args.path),
-    args.events.split(),
-    entry,
-    args.owned_pattern.split("|"),
-    _default_cursor_document(),
-  )
-
-
-CLAUDE_OWNED_MARKERS = ["fireraven", "claude_guardrail.py"]
+  command = args.command or f"python3 {args.script_path}"
+  text = _read_text(args.path)
+  if not text.strip():
+    text = _default_cursor_document()
+  owned_markers = args.owned_pattern.split("|")
+  for event in args.events.split():
+    entry: dict = {"command": command}
+    entry.update(CURSOR_EVENT_OPTIONS.get(event, {}))
+    try:
+      text = merge_hook_array(text, ["hooks", event], entry, owned_markers)
+    except JsoncModifyError as exc:
+      _fail(args.path, exc)
+  write_jsonc_file(args.path, text)
 
 
 def cmd_merge_claude(args: argparse.Namespace) -> None:
@@ -123,10 +135,18 @@ def cmd_merge_claude(args: argparse.Namespace) -> None:
   prompt_entry = {
     "hooks": [{"type": "command", "command": command}],
   }
+  post_read_entry = {
+    "matcher": "Read",
+    "hooks": [{"type": "command", "command": command}],
+  }
   text = _read_text(args.path)
   if not text.strip():
     text = _default_claude_document()
-  for event, entry in [("PreToolUse", pretool_entry), ("UserPromptSubmit", prompt_entry)]:
+  for event, entry in [
+    ("PreToolUse", pretool_entry),
+    ("UserPromptSubmit", prompt_entry),
+    ("PostToolUse", post_read_entry),
+  ]:
     try:
       text = merge_hook_array(text, ["hooks", event], entry, CLAUDE_OWNED_MARKERS)
     except JsoncModifyError as exc:
@@ -165,7 +185,7 @@ def cmd_scrub_claude(args: argparse.Namespace) -> None:
   _scrub_events(
     args.path,
     _read_text(args.path),
-    ["PreToolUse", "UserPromptSubmit"],
+    CLAUDE_EVENTS,
     args.owned_pattern.split("|"),
   )
 

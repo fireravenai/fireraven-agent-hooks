@@ -20,7 +20,7 @@ FIRERAVEN_ENTRY_PATTERN="fireraven|windsurf_guardrail.py|cursor_guardrail.py|run
 WINDSURF_PRE_EVENTS="pre_user_prompt pre_run_command pre_mcp_tool_use pre_write_code pre_read_code"
 WINDSURF_POST_EVENTS="post_cascade_response post_write_code"
 
-CURSOR_EVENTS="beforeSubmitPrompt beforeShellExecution beforeMCPExecution beforeReadFile"
+CURSOR_EVENTS="beforeSubmitPrompt beforeShellExecution beforeMCPExecution beforeReadFile preToolUse subagentStart afterFileEdit"
 GITHUB_COPILOT_EVENTS="userPromptSubmitted preToolUse postToolUse"
 
 RED='\033[0;31m'
@@ -109,7 +109,7 @@ download_package_tree() {
 
     for path in \
         core/__init__.py core/config.py core/session_store.py core/fireraven_client.py \
-        core/serializers.py core/guardrail.py \
+        core/serializers.py core/guardrail.py core/human_override.py \
         adapters/__init__.py adapters/windsurf.py adapters/cursor.py adapters/claude.py adapters/github_copilot.py; do
         url="${raw_base}/${path}"
         mkdir -p "${dest_dir}/$(dirname "$path")"

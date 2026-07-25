@@ -15,7 +15,16 @@ from core.session_store import append_history, get_messages_history, load, updat
 
 
 class GuardrailError(Exception):
-    pass
+    """Raised when an action must be blocked.
+
+    ``overridable`` is True for FireGuard policy/security violations (human may
+    approve once). Local sensitive-path blocks and missing credentials are not
+    overridable.
+    """
+
+    def __init__(self, message: str, *, overridable: bool = True) -> None:
+        super().__init__(message)
+        self.overridable = overridable
 
 
 def _settings() -> dict[str, Any]:
@@ -23,18 +32,24 @@ def _settings() -> dict[str, Any]:
     try:
         settings = resolve_settings(config)
     except ValueError as exc:
-        raise GuardrailError(str(exc)) from exc
+        raise GuardrailError(str(exc), overridable=False) from exc
 
     if not settings["api_key"]:
-        raise GuardrailError("FIRERAVEN_GUARDRAILS_API_KEY is not configured.")
+        raise GuardrailError(
+            "FIRERAVEN_GUARDRAILS_API_KEY is not configured.",
+            overridable=False,
+        )
     if not settings["project_id"]:
-        raise GuardrailError("FIRERAVEN_PROJECT_ID is not configured.")
+        raise GuardrailError(
+            "FIRERAVEN_PROJECT_ID is not configured.",
+            overridable=False,
+        )
     return settings
 
 
 def run_input_check(session_id: str, text: str, label: str) -> dict:
     if text.startswith("__LOCAL_BLOCK__:"):
-        raise GuardrailError(text.split(":", 1)[1])
+        raise GuardrailError(text.split(":", 1)[1], overridable=False)
 
     settings = _settings()
     state = load(session_id)

@@ -18,7 +18,10 @@ OWNED_PATTERN = (
     "run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|"
     "github_copilot_guardrail.py|run_github_copilot_guardrail.ps1"
 )
-CURSOR_EVENTS = "beforeSubmitPrompt beforeShellExecution beforeMCPExecution beforeReadFile"
+CURSOR_EVENTS = (
+    "beforeSubmitPrompt beforeShellExecution beforeMCPExecution beforeReadFile "
+    "preToolUse subagentStart afterFileEdit"
+)
 GITHUB_COPILOT_EVENTS = "userPromptSubmitted preToolUse postToolUse"
 
 
@@ -161,10 +164,26 @@ class MergeHooksConfigTests(unittest.TestCase):
         _run_merge_cursor(self.hooks_path, "/tmp/cursor_guardrail.py")
         data = json.loads(_strip_comments(self.hooks_path.read_text(encoding="utf-8")))
         hooks = data["hooks"]
-        self.assertEqual(hooks["preToolUse"][0]["command"], "rtk hook cursor")
+        # Third-party preToolUse preserved; Fireraven adds Write matcher entry.
+        pretool_cmds = [entry["command"] for entry in hooks["preToolUse"]]
+        self.assertIn("rtk hook cursor", pretool_cmds)
+        fireraven_pretool = next(
+            entry for entry in hooks["preToolUse"] if "cursor_guardrail.py" in entry["command"]
+        )
+        self.assertEqual(fireraven_pretool["matcher"], "Write")
+        self.assertTrue(fireraven_pretool.get("failClosed"))
+
         for event in CURSOR_EVENTS.split():
-            self.assertEqual(len(hooks[event]), 1)
-            self.assertIn("cursor_guardrail.py", hooks[event][0]["command"])
+            self.assertTrue(hooks[event], msg=f"missing {event}")
+            fireraven_entries = [
+                entry
+                for entry in hooks[event]
+                if "cursor_guardrail.py" in entry.get("command", "")
+            ]
+            self.assertEqual(len(fireraven_entries), 1, msg=event)
+
+        self.assertTrue(hooks["beforeReadFile"][0].get("failClosed"))
+        self.assertTrue(hooks["beforeMCPExecution"][0].get("failClosed"))
 
     def test_idempotent_merge(self) -> None:
         _run_merge_cursor(self.hooks_path, "/tmp/cursor_guardrail.py")
@@ -180,7 +199,10 @@ class MergeHooksConfigTests(unittest.TestCase):
         data = json.loads(_strip_comments(scrubbed))
         hooks = data["hooks"]
         self.assertIn("preToolUse", hooks)
+        self.assertEqual(hooks["preToolUse"][0]["command"], "rtk hook cursor")
         for event in CURSOR_EVENTS.split():
+            if event == "preToolUse":
+                continue
             self.assertNotIn(event, hooks)
         for line in self.original.splitlines():
             if line.lstrip().startswith("//"):
@@ -242,6 +264,11 @@ class MergeClaudeHooksConfigTests(unittest.TestCase):
         self.assertNotIn("matcher", prompt)
         self.assertEqual(prompt["hooks"][0]["command"], command)
 
+        self.assertEqual(len(hooks["PostToolUse"]), 1)
+        post = hooks["PostToolUse"][0]
+        self.assertEqual(post["matcher"], "Read")
+        self.assertEqual(post["hooks"][0]["command"], command)
+
     def test_replaces_broken_windows_command(self) -> None:
         script_path = "C:/Users/test/.claude/hooks/claude_guardrail.py"
         broken_command = (
@@ -287,6 +314,7 @@ class MergeClaudeHooksConfigTests(unittest.TestCase):
 
         self.assertIn("PreToolUse", first["hooks"])
         self.assertIn("UserPromptSubmit", first["hooks"])
+        self.assertIn("PostToolUse", first["hooks"])
         self.assertEqual(scrubbed["hooks"], {})
 
 

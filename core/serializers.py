@@ -9,6 +9,9 @@ SENSITIVE_PATH_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Truncate file bodies / edit hunks sent to FireGuard.
+CONTENT_TRUNCATE_CHARS = 8_000
+
 WINDSURF_INPUT_EVENTS = {
     "pre_user_prompt",
     "pre_run_command",
@@ -28,6 +31,11 @@ CURSOR_INPUT_EVENTS = {
     "beforeMCPExecution",
     "beforeReadFile",
     "preToolUse",
+    "subagentStart",
+}
+
+CURSOR_AUDIT_EVENTS = {
+    "afterFileEdit",
 }
 
 GITHUB_COPILOT_INPUT_EVENTS = {
@@ -44,6 +52,12 @@ def local_sensitive_path_block(file_path: str) -> str | None:
     if SENSITIVE_PATH_RE.search(file_path):
         return f"Access to sensitive path blocked locally: {file_path}"
     return None
+
+
+def _truncate(text: str, limit: int = CONTENT_TRUNCATE_CHARS) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n…[truncated]"
 
 
 def serialize_windsurf(action: str, tool_info: dict) -> str | None:
@@ -134,6 +148,12 @@ def serialize_cursor(hook_event: str, payload: dict) -> str | None:
         blocked = local_sensitive_path_block(file_path)
         if blocked:
             return f"__LOCAL_BLOCK__:{blocked}"
+        content = payload.get("content")
+        if isinstance(content, str) and content.strip():
+            return (
+                f"File read request: {file_path}\n\nContent:\n"
+                f"{_truncate(content)}"
+            )
         return f"File read request: {file_path}"
 
     if hook_event == "preToolUse":
@@ -142,6 +162,33 @@ def serialize_cursor(hook_event: str, payload: dict) -> str | None:
         if not tool_name and not tool_input:
             return None
         return f"Tool use: {tool_name}\n{json.dumps(tool_input, indent=2)}"
+
+    if hook_event == "subagentStart":
+        task = (payload.get("task") or "").strip()
+        subagent_type = (payload.get("subagent_type") or "").strip()
+        if not task and not subagent_type:
+            return None
+        header = f"Subagent start ({subagent_type})" if subagent_type else "Subagent start"
+        if task:
+            return f"{header}:\n{_truncate(task)}"
+        return header
+
+    if hook_event == "afterFileEdit":
+        file_path = (payload.get("file_path") or payload.get("path") or "").strip()
+        edits = payload.get("edits") or []
+        if not file_path and not edits:
+            return None
+        parts = [f"Applied file edit: {file_path}"]
+        for edit in edits:
+            if not isinstance(edit, dict):
+                continue
+            old = edit.get("old_string") or ""
+            new = edit.get("new_string") or ""
+            parts.append(
+                f"--- old ---\n{_truncate(str(old), 4_000)}\n"
+                f"--- new ---\n{_truncate(str(new), 4_000)}"
+            )
+        return "\n\n".join(parts)
 
     return None
 
@@ -252,8 +299,39 @@ def serialize_github_copilot(event: str, payload: dict) -> str | None:
     return None
 
 
+def infer_claude_event(payload: dict) -> str:
+    explicit = (payload.get("hook_event_name") or payload.get("event") or "").strip()
+    if explicit:
+        return explicit
+    if payload.get("tool_response") is not None or payload.get("tool_result") is not None:
+        return "PostToolUse"
+    if payload.get("tool_name") or payload.get("name") or payload.get("tool_input") is not None:
+        return "PreToolUse"
+    if payload.get("prompt"):
+        return "UserPromptSubmit"
+    return ""
+
+
 def serialize_claude(payload: dict) -> str | None:
+    hook_event = infer_claude_event(payload)
     tool_name = payload.get("tool_name") or payload.get("name") or ""
+
+    if hook_event == "PostToolUse":
+        response = payload.get("tool_response")
+        if response is None:
+            response = payload.get("tool_result")
+        if response is None:
+            return None
+        if isinstance(response, str):
+            body = response.strip()
+            if not body:
+                return None
+            return f"Claude PostToolUse ({tool_name}):\n{_truncate(body)}"
+        return (
+            f"Claude PostToolUse ({tool_name}):\n"
+            f"{_truncate(json.dumps(response, indent=2))}"
+        )
+
     tool_input = payload.get("tool_input") or payload.get("input") or payload.get("arguments") or {}
     if isinstance(tool_input, str):
         text = tool_input.strip()
