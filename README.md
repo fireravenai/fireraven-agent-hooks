@@ -123,13 +123,15 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Agent windsurf
 
 ### Cursor
 
-**Input (blocking):** `beforeSubmitPrompt`, `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile` (path + file body), `preToolUse` (matcher `Write`), `subagentStart`
+**Input (blocking):** `beforeSubmitPrompt`, `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile` (path + file body), `preToolUse` (matcher `.*` — all tools; Shell/Read/MCP are deferred to the dedicated hooks above to avoid double FireGuard), `subagentStart`
 
 **Output (audit only):** `afterFileEdit` (written hunks; cannot undo)
 
 Denies via JSON rather than exit codes. `beforeSubmitPrompt` uses `{"continue": false}`; other Cursor events use `{"permission": "deny"}`.
 
 **Human override:** On FireGuard policy/security violations for tool/shell/MCP/read/subagent gates, the hook shows a blocking OS confirmation dialog (zenity/kdialog on Linux, osascript on macOS, MessageBox on Windows). Allow continues once for that action; Deny/timeout/no-display keeps the deny. Local sensitive-path blocks (`.env`, keys, etc.) and missing credentials are **not** overridable. Prompt blocks stay hard deny (edit the prompt). Cursor’s native `permission: "ask"` is not used — it is not reliably enforced today.
+
+Cursor coverage is self-contained in `cursor_guardrail.py` / `~/.cursor/hooks.json`. If Cursor also loads Claude Code third-party hooks, Fireraven’s Claude adapter no-ops under Cursor so enforcement stays on these native Cursor hooks only.
 
 `~/.cursor/hooks.json` may use JSONC (`//` or `/* */` comments). The installer merges Fireraven hook entries with surgical edits so existing comments, indentation, and third-party hooks (for example other `preToolUse` matchers) are preserved. Commented-out hook blocks stay commented; the installer adds live Fireraven entries separately.
 
@@ -142,6 +144,8 @@ Denies via JSON rather than exit codes. `beforeSubmitPrompt` uses `{"continue": 
 **Human override:** On FireGuard policy/security violations for `PreToolUse`, the hook returns `permissionDecision: "ask"` so Claude Code’s UI prompts the user to Allow/Deny. That click is the override (no config flip). `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks and missing credentials are not overridable.
 
 `FileChanged` and `SubagentStart` are not registered as guardrail gates (`SubagentStart` cannot block; Agent prompts are already covered by `PreToolUse`).
+
+If Cursor has **third-party Claude Code hooks** enabled, it may also invoke `~/.claude/settings.json` hooks during Cursor sessions. Fireraven’s Claude adapter detects Cursor (`cursor_version` / `CURSOR_VERSION`) and exits without enforcing so native Cursor hooks remain the only FireGuard path. To stop those invocations entirely, disable *Include third-party Plugins, Skills, and other configs* in Cursor Settings → Rules, Skills, Subagents.
 
 ### GitHub Copilot
 

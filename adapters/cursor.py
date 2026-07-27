@@ -5,6 +5,7 @@ import sys
 
 from core.config import load_config, resolve_settings
 from core.guardrail import GuardrailError, run_input_check
+from core.hook_io import read_hook_input
 from core.human_override import OverrideDecision, log_override_audit, request_human_override
 from core.serializers import CURSOR_AUDIT_EVENTS, CURSOR_INPUT_EVENTS, serialize_cursor
 
@@ -17,6 +18,23 @@ CURSOR_OVERRIDE_EVENTS = {
 }
 
 CURSOR_KNOWN_EVENTS = CURSOR_INPUT_EVENTS | CURSOR_AUDIT_EVENTS
+
+# Covered by dedicated Cursor hooks; skip duplicate FireGuard on preToolUse.
+_PRETOOL_DEFER_TOOLS = frozenset({"shell", "read"})
+
+
+def pretool_deferred_to_specialized(tool_name: str) -> bool:
+    """True when a specialized Cursor hook already screens this tool."""
+    name = (tool_name or "").strip()
+    if not name:
+        return False
+    lower = name.lower()
+    if lower in _PRETOOL_DEFER_TOOLS:
+        return True
+    # Cursor MCP tools often appear as "MCP:..." / "mcp__...".
+    if lower.startswith("mcp:") or lower.startswith("mcp__"):
+        return True
+    return False
 
 
 def _allow(hook_event: str) -> None:
@@ -73,18 +91,6 @@ def infer_cursor_event(payload: dict) -> str:
     return ""
 
 
-def read_hook_input() -> dict:
-    raw = sys.stdin.buffer.read()
-    if not raw:
-        raise json.JSONDecodeError("empty stdin", "", 0)
-
-    text = raw.decode("utf-8-sig", errors="replace").strip()
-    if not text:
-        raise json.JSONDecodeError("empty stdin", "", 0)
-
-    return json.loads(text)
-
-
 def _handle_policy_block(hook_event: str, session_id: str, exc: GuardrailError) -> None:
     message = str(exc)
     if hook_event not in CURSOR_OVERRIDE_EVENTS or not exc.overridable:
@@ -112,6 +118,11 @@ def main() -> None:
 
     if hook_event not in CURSOR_KNOWN_EVENTS:
         _allow(hook_event or "beforeSubmitPrompt")
+
+    if hook_event == "preToolUse" and pretool_deferred_to_specialized(
+        str(hook_input.get("tool_name") or "")
+    ):
+        _allow(hook_event)
 
     text = serialize_cursor(hook_event, hook_input)
     if not text:

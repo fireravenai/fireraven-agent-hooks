@@ -164,13 +164,13 @@ class MergeHooksConfigTests(unittest.TestCase):
         _run_merge_cursor(self.hooks_path, "/tmp/cursor_guardrail.py")
         data = json.loads(_strip_comments(self.hooks_path.read_text(encoding="utf-8")))
         hooks = data["hooks"]
-        # Third-party preToolUse preserved; Fireraven adds Write matcher entry.
+        # Third-party preToolUse preserved; Fireraven adds .* matcher entry.
         pretool_cmds = [entry["command"] for entry in hooks["preToolUse"]]
         self.assertIn("rtk hook cursor", pretool_cmds)
         fireraven_pretool = next(
             entry for entry in hooks["preToolUse"] if "cursor_guardrail.py" in entry["command"]
         )
-        self.assertEqual(fireraven_pretool["matcher"], "Write")
+        self.assertEqual(fireraven_pretool["matcher"], ".*")
         self.assertTrue(fireraven_pretool.get("failClosed"))
 
         for event in CURSOR_EVENTS.split():

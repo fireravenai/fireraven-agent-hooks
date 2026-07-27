@@ -5,12 +5,13 @@ import sys
 
 from core.config import load_config, resolve_settings
 from core.guardrail import GuardrailError, handle_failure, run_input_check, run_output_audit
+from core.hook_io import read_hook_input
 from core.serializers import WINDSURF_INPUT_EVENTS, WINDSURF_OUTPUT_AUDIT_EVENTS, serialize_windsurf
 
 
 def main() -> None:
     try:
-        hook_input = json.loads(sys.stdin.read())
+        hook_input = read_hook_input()
     except json.JSONDecodeError as exc:
         print(f"Fireraven guardrail hook: invalid hook input JSON ({exc}).", file=sys.stderr)
         sys.exit(2)

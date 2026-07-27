@@ -86,10 +86,13 @@ CLAUDE_OWNED_MARKERS = ["fireraven", "claude_guardrail.py"]
 CLAUDE_EVENTS = ["PreToolUse", "UserPromptSubmit", "PostToolUse"]
 
 # Per-event Cursor hook fields (matcher / failClosed) merged into each entry.
+# preToolUse uses .* so Cursor is self-sufficient without Claude third-party hooks.
+# The Cursor adapter skips Shell/Read/MCP here to avoid double-screening with
+# beforeShellExecution / beforeReadFile / beforeMCPExecution.
 CURSOR_EVENT_OPTIONS: dict[str, dict] = {
   "beforeReadFile": {"failClosed": True},
   "beforeMCPExecution": {"failClosed": True},
-  "preToolUse": {"matcher": "Write", "failClosed": True},
+  "preToolUse": {"matcher": ".*", "failClosed": True},
 }
 
 

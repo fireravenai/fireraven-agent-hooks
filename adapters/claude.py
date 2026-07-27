@@ -1,12 +1,28 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 from core.config import load_config, resolve_settings
 from core.guardrail import GuardrailError, run_input_check
+from core.hook_io import read_hook_input
 from core.human_override import log_override_audit
 from core.serializers import infer_claude_event, serialize_claude
+
+
+def invoked_from_cursor(payload: dict) -> bool:
+    """True when Cursor runs this script via third-party Claude Code hooks.
+
+    Cursor can load ~/.claude/settings.json hooks alongside ~/.cursor/hooks.json.
+    Fireraven installs both agents separately; under Cursor only cursor_guardrail
+    should enforce. Claude Code never sends cursor_version / CURSOR_VERSION.
+    """
+    if payload.get("cursor_version"):
+        return True
+    if (payload.get("cursorVersion") or "").strip():
+        return True
+    return bool(os.environ.get("CURSOR_VERSION", "").strip())
 
 
 def _ask_pretool(message: str) -> None:
@@ -46,10 +62,14 @@ def _post_tool_warn(message: str) -> None:
 
 def main() -> None:
     try:
-        hook_input = json.loads(sys.stdin.read())
+        hook_input = read_hook_input()
     except json.JSONDecodeError as exc:
         print(f"Fireraven guardrail hook: invalid hook input JSON ({exc}).", file=sys.stderr)
         sys.exit(2)
+
+    # Cursor third-party bridge: defer to native Cursor Fireraven hooks.
+    if invoked_from_cursor(hook_input):
+        sys.exit(0)
 
     hook_event = infer_claude_event(hook_input)
     text = serialize_claude(hook_input)

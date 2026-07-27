@@ -5,6 +5,7 @@ import sys
 
 from core.config import load_config, resolve_settings
 from core.guardrail import GuardrailError, run_input_check, run_output_audit
+from core.hook_io import read_hook_input
 from core.serializers import (
     GITHUB_COPILOT_INPUT_EVENTS,
     GITHUB_COPILOT_OUTPUT_AUDIT_EVENTS,
@@ -32,18 +33,6 @@ def infer_github_copilot_event(payload: dict) -> str:
     if payload.get("prompt") is not None:
         return "userPromptSubmitted"
     return ""
-
-
-def read_hook_input() -> dict:
-    raw = sys.stdin.buffer.read()
-    if not raw:
-        raise json.JSONDecodeError("empty stdin", "", 0)
-
-    text = raw.decode("utf-8-sig", errors="replace").strip()
-    if not text:
-        raise json.JSONDecodeError("empty stdin", "", 0)
-
-    return json.loads(text)
 
 
 def _allow() -> None:

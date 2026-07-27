@@ -78,6 +78,10 @@ class SerializeClaudeTests(unittest.TestCase):
             infer_claude_event({"prompt": "hello"}),
             "UserPromptSubmit",
         )
+        self.assertEqual(
+            infer_claude_event({"hook_event_name": "preToolUse", "tool_name": "Read"}),
+            "PreToolUse",
+        )
 
     def test_post_tool_use_read_body(self) -> None:
         text = serialize_claude(
@@ -94,6 +98,33 @@ class SerializeClaudeTests(unittest.TestCase):
             {"tool_name": "Bash", "tool_input": {"command": "echo hi"}}
         )
         self.assertIn("Claude tool: Bash", text or "")
+
+
+class HookIoTests(unittest.TestCase):
+    def test_read_hook_input_strips_utf8_bom(self) -> None:
+        from core.hook_io import read_hook_input
+
+        payload = {"hook_event_name": "preToolUse", "tool_name": "Read"}
+        raw = b"\xef\xbb\xbf" + json.dumps(payload).encode("utf-8")
+        buffer = mock.Mock()
+        buffer.read.return_value = raw
+        stdin = mock.Mock()
+        stdin.buffer = buffer
+        with mock.patch("core.hook_io.sys.stdin", stdin):
+            parsed = read_hook_input()
+        self.assertEqual(parsed["tool_name"], "Read")
+
+    def test_read_hook_input_plain_utf8(self) -> None:
+        from core.hook_io import read_hook_input
+
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash"}
+        buffer = mock.Mock()
+        buffer.read.return_value = json.dumps(payload).encode("utf-8")
+        stdin = mock.Mock()
+        stdin.buffer = buffer
+        with mock.patch("core.hook_io.sys.stdin", stdin):
+            parsed = read_hook_input()
+        self.assertEqual(parsed["tool_name"], "Bash")
 
 
 class HumanOverrideTests(unittest.TestCase):
@@ -116,6 +147,39 @@ class HumanOverrideTests(unittest.TestCase):
                     ):
                         decision = request_human_override("t", "blocked")
         self.assertEqual(decision, OverrideDecision.ALLOW)
+
+
+class CursorPretoolDeferTests(unittest.TestCase):
+    def test_defer_shell_read_mcp(self) -> None:
+        from adapters.cursor import pretool_deferred_to_specialized
+
+        self.assertTrue(pretool_deferred_to_specialized("Shell"))
+        self.assertTrue(pretool_deferred_to_specialized("Read"))
+        self.assertTrue(pretool_deferred_to_specialized("MCP:server-tool"))
+        self.assertTrue(pretool_deferred_to_specialized("mcp__server__tool"))
+        self.assertFalse(pretool_deferred_to_specialized("Write"))
+        self.assertFalse(pretool_deferred_to_specialized("Grep"))
+        self.assertFalse(pretool_deferred_to_specialized("Delete"))
+        self.assertFalse(pretool_deferred_to_specialized("Task"))
+
+    def test_pretool_shell_allows_without_fireguard(self) -> None:
+        from adapters import cursor as cursor_adapter
+
+        payload = {
+            "hook_event_name": "preToolUse",
+            "conversation_id": "s1",
+            "tool_name": "Shell",
+            "tool_input": {"command": "ls"},
+        }
+        with mock.patch.object(cursor_adapter, "read_hook_input", return_value=payload):
+            with mock.patch.object(cursor_adapter, "run_input_check") as check:
+                with mock.patch("builtins.print") as printer:
+                    with self.assertRaises(SystemExit) as cm:
+                        cursor_adapter.main()
+        self.assertEqual(cm.exception.code, 0)
+        check.assert_not_called()
+        printer.assert_called()
+        self.assertIn("allow", printer.call_args.args[0])
 
 
 class CursorAdapterOverrideTests(unittest.TestCase):
@@ -185,9 +249,7 @@ class ClaudeAdapterAskTests(unittest.TestCase):
             "tool_name": "Bash",
             "tool_input": {"command": "evil"},
         }
-        stdin = mock.Mock()
-        stdin.read.return_value = json.dumps(payload)
-        with mock.patch.object(claude_adapter.sys, "stdin", stdin):
+        with mock.patch.object(claude_adapter, "read_hook_input", return_value=payload):
             with mock.patch.object(claude_adapter, "load_config", return_value={}):
                 with mock.patch.object(
                     claude_adapter,
@@ -216,6 +278,59 @@ class ClaudeAdapterAskTests(unittest.TestCase):
             "ask",
         )
 
+    def test_cursor_bridged_invocation_is_skipped(self) -> None:
+        from adapters import claude as claude_adapter
+
+        payload = {
+            "hook_event_name": "preToolUse",
+            "cursor_version": "3.13.10",
+            "session_id": "s1",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/tmp/a"},
+        }
+        with mock.patch.object(claude_adapter, "read_hook_input", return_value=payload):
+            with mock.patch.object(claude_adapter, "run_input_check") as check:
+                with self.assertRaises(SystemExit) as cm:
+                    claude_adapter.main()
+        self.assertEqual(cm.exception.code, 0)
+        check.assert_not_called()
+
+    def test_claude_native_pretool_still_runs(self) -> None:
+        from adapters import claude as claude_adapter
+        from core.guardrail import GuardrailError
+
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "session_id": "s1",
+            "tool_name": "Bash",
+            "tool_input": {"command": "evil"},
+        }
+        with mock.patch.object(claude_adapter, "read_hook_input", return_value=payload):
+            with mock.patch.object(claude_adapter, "load_config", return_value={}):
+                with mock.patch.object(
+                    claude_adapter,
+                    "resolve_settings",
+                    return_value={"fail_closed": False},
+                ):
+                    with mock.patch.object(
+                        claude_adapter,
+                        "run_input_check",
+                        side_effect=GuardrailError("blocked by policy"),
+                    ):
+                        with mock.patch("builtins.print") as printer:
+                            with self.assertRaises(SystemExit) as cm:
+                                claude_adapter.main()
+        self.assertEqual(cm.exception.code, 0)
+        printed = None
+        for call in printer.call_args_list:
+            args = call.args
+            if args and isinstance(args[0], str) and args[0].startswith("{"):
+                printed = json.loads(args[0])
+                break
+        self.assertIsNotNone(printed)
+        assert printed is not None
+        self.assertEqual(printed["hookSpecificOutput"]["permissionDecision"], "ask")
+
     def test_user_prompt_still_exits_2(self) -> None:
         from adapters import claude as claude_adapter
         from core.guardrail import GuardrailError
@@ -225,9 +340,7 @@ class ClaudeAdapterAskTests(unittest.TestCase):
             "session_id": "s1",
             "prompt": "jailbreak",
         }
-        stdin = mock.Mock()
-        stdin.read.return_value = json.dumps(payload)
-        with mock.patch.object(claude_adapter.sys, "stdin", stdin):
+        with mock.patch.object(claude_adapter, "read_hook_input", return_value=payload):
             with mock.patch.object(claude_adapter, "load_config", return_value={}):
                 with mock.patch.object(
                     claude_adapter,

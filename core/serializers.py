@@ -302,7 +302,13 @@ def serialize_github_copilot(event: str, payload: dict) -> str | None:
 def infer_claude_event(payload: dict) -> str:
     explicit = (payload.get("hook_event_name") or payload.get("event") or "").strip()
     if explicit:
-        return explicit
+        # Cursor third-party Claude hooks may send camelCase (preToolUse).
+        aliases = {
+            "pretooluse": "PreToolUse",
+            "posttooluse": "PostToolUse",
+            "userpromptsubmit": "UserPromptSubmit",
+        }
+        return aliases.get(explicit.lower(), explicit)
     if payload.get("tool_response") is not None or payload.get("tool_result") is not None:
         return "PostToolUse"
     if payload.get("tool_name") or payload.get("name") or payload.get("tool_input") is not None:

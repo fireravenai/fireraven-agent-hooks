@@ -253,6 +253,7 @@ function Download-PackageTree {
         "core/serializers.py",
         "core/guardrail.py",
         "core/human_override.py",
+        "core/hook_io.py",
         "adapters/__init__.py",
         "adapters/windsurf.py",
         "adapters/cursor.py",

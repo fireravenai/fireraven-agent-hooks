@@ -109,7 +109,7 @@ download_package_tree() {
 
     for path in \
         core/__init__.py core/config.py core/session_store.py core/fireraven_client.py \
-        core/serializers.py core/guardrail.py core/human_override.py \
+        core/serializers.py core/guardrail.py core/human_override.py core/hook_io.py \
         adapters/__init__.py adapters/windsurf.py adapters/cursor.py adapters/claude.py adapters/github_copilot.py; do
         url="${raw_base}/${path}"
         mkdir -p "${dest_dir}/$(dirname "$path")"
