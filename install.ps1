@@ -17,7 +17,8 @@ $WindsurfPreEvents = @("pre_user_prompt", "pre_run_command", "pre_mcp_tool_use",
 $WindsurfPostEvents = @("post_cascade_response", "post_write_code")
 $CursorEvents = @("beforeSubmitPrompt", "beforeShellExecution", "beforeMCPExecution", "beforeReadFile", "preToolUse", "subagentStart", "afterFileEdit")
 $GitHubCopilotEvents = @("userPromptSubmitted", "preToolUse", "postToolUse")
-$FireravenEntryPattern = "fireraven|windsurf_guardrail\.py|cursor_guardrail\.py|run_cursor_guardrail\.ps1|claude_guardrail\.py|fireraven_input_guardrail\.py|github_copilot_guardrail\.py|run_github_copilot_guardrail\.ps1"
+# Markers are literal substrings (not regex) matched against serialized hook entries.
+$FireravenEntryPattern = "fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|github_copilot_guardrail.py|run_github_copilot_guardrail.ps1"
 
 function Write-Info {
     param([string]$Message)
