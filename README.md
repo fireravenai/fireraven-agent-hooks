@@ -95,6 +95,31 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Agent cursor
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Agent windsurf
 ```
 
+### Enterprise deploy (admin → employee profile, Claude Code)
+
+For IT admins who need to install Claude Code guardrails into a **non-admin employee** profile on Windows:
+
+1. Install **Python 3 machine-wide** on the PC (`py -3 --version` must work for all users).
+2. Ensure the employee has logged in at least once (so `C:\Users\<employee>` exists).
+3. Download `deploy-claude-windows.ps1` from `scripts/claude code windows scripts/`, edit the **CONFIG** block (`TargetUser`, `ApiKey`, `ProjectId`), then run **PowerShell as Administrator**:
+
+```powershell
+irm https://raw.githubusercontent.com/fireravenai/fireraven-agent-hooks/refs/heads/main/scripts/claude%20code%20windows%20scripts/deploy-claude-windows.ps1 -OutFile deploy-claude-windows.ps1
+notepad deploy-claude-windows.ps1
+powershell -ExecutionPolicy Bypass -File .\deploy-claude-windows.ps1
+```
+
+Or pass values on the command line (no notepad step):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy-claude-windows.ps1 `
+  -TargetUser "EMPLOYEE USERNAME" `
+  -ApiKey "YOUR_ORG_API_KEY" `
+  -ProjectId "EMPLOYEE_PROJECT_ID"
+```
+
+The script installs into `C:\Users\<employee>\.claude\`, writes `hooks\config.env`, grants the employee access, and smoke-tests FireGuard with a `hello world` prompt. Ask the employee to restart Claude Code afterward.
+
 ## Value proposition
 
 | Threat | Coverage |
