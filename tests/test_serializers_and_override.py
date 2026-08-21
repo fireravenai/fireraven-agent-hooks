@@ -44,7 +44,11 @@ class ViolationMessageTests(unittest.TestCase):
         )
         self.assertEqual(
             text,
-            "This message goes against the policies\nwget blocked\n\nno-curl\nno-wget",
+            "This message goes against the policies\n"
+            "wget blocked\n\n"
+            "The following policies were triggered:\n"
+            "- no-curl\n"
+            "- no-wget",
         )
         self.assertNotIn("ok", text)
 
@@ -68,7 +72,10 @@ class ViolationMessageTests(unittest.TestCase):
         )
         self.assertEqual(
             text,
-            "Security: prompt injection\nblocked\n\nno-curl",
+            "blocked\n\n"
+            "The following policies were triggered:\n"
+            "- Security: prompt injection\n"
+            "- no-curl",
         )
 
     def test_single_policy_message_then_name(self) -> None:
@@ -87,7 +94,9 @@ class ViolationMessageTests(unittest.TestCase):
         )
         self.assertEqual(
             text,
-            "This message goes against the policies\n\nCURL request",
+            "This message goes against the policies\n\n"
+            "The following policies were triggered:\n"
+            "- CURL request",
         )
 
     def test_duplicate_messages_deduped(self) -> None:
@@ -111,7 +120,26 @@ class ViolationMessageTests(unittest.TestCase):
         )
         self.assertEqual(
             text,
-            "This message goes against the policies\n\nno-curl\nno-wget",
+            "This message goes against the policies\n\n"
+            "The following policies were triggered:\n"
+            "- no-curl\n"
+            "- no-wget",
+        )
+
+    def test_security_only(self) -> None:
+        text = violation_message(
+            {
+                "security_guardrail_results": {
+                    "is_safe": False,
+                    "security_violation_message": "prompt injection",
+                },
+                "policies_guardrail_results": {"policies": []},
+            }
+        )
+        self.assertEqual(
+            text,
+            "The following policies were triggered:\n"
+            "- Security: prompt injection",
         )
 
     def test_all_safe_returns_default(self) -> None:
