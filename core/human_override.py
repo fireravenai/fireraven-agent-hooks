@@ -88,17 +88,20 @@ def _linux_dialog(title: str, message: str, timeout_sec: int) -> OverrideDecisio
     prompt = f"{message}\n\nAllow this action anyway?"
 
     if shutil.which("yad"):
+        # Plain dialog (not --question) avoids stock icons; empty window-icon
+        # clears the title-bar glyph when the toolkit allows it.
         result = subprocess.run(
             [
                 "yad",
-                "--question",
                 f"--title={title}",
                 f"--text={prompt}",
-                "--text-align=center",
+                "--text-align=left",
+                "--window-icon=",
                 "--button=Allow:0",
                 "--button=Deny:1",
                 "--buttons-layout=center",
-                "--width=520",
+                "--borders=16",
+                "--width=420",
                 "--center",
                 f"--timeout={int(timeout_sec)}",
             ],

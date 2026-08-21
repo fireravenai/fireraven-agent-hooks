@@ -12,12 +12,118 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core.fireraven_client import violation_message
 from core.human_override import OverrideDecision, request_human_override, resolve_override
 from core.serializers import (
     infer_claude_event,
     serialize_claude,
     serialize_cursor,
 )
+
+
+class ViolationMessageTests(unittest.TestCase):
+    def test_two_unsafe_policies_message_then_names(self) -> None:
+        text = violation_message(
+            {
+                "policies_guardrail_results": {
+                    "policies": [
+                        {
+                            "name": "no-curl",
+                            "is_safe": False,
+                            "policy_violation_message": "This message goes against the policies",
+                        },
+                        {
+                            "name": "no-wget",
+                            "is_safe": False,
+                            "policy_violation_message": "wget blocked",
+                        },
+                        {"name": "ok", "is_safe": True, "policy_violation_message": "n/a"},
+                    ]
+                }
+            }
+        )
+        self.assertEqual(
+            text,
+            "This message goes against the policies\nwget blocked\n\nno-curl\nno-wget",
+        )
+        self.assertNotIn("ok", text)
+
+    def test_security_and_policy_both_appear(self) -> None:
+        text = violation_message(
+            {
+                "security_guardrail_results": {
+                    "is_safe": False,
+                    "security_violation_message": "prompt injection",
+                },
+                "policies_guardrail_results": {
+                    "policies": [
+                        {
+                            "name": "no-curl",
+                            "is_safe": False,
+                            "policy_violation_message": "blocked",
+                        }
+                    ]
+                },
+            }
+        )
+        self.assertEqual(
+            text,
+            "Security: prompt injection\nblocked\n\nno-curl",
+        )
+
+    def test_single_policy_message_then_name(self) -> None:
+        text = violation_message(
+            {
+                "policies_guardrail_results": {
+                    "policies": [
+                        {
+                            "name": "CURL request",
+                            "is_safe": False,
+                            "policy_violation_message": "This message goes against the policies",
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(
+            text,
+            "This message goes against the policies\n\nCURL request",
+        )
+
+    def test_duplicate_messages_deduped(self) -> None:
+        text = violation_message(
+            {
+                "policies_guardrail_results": {
+                    "policies": [
+                        {
+                            "name": "no-curl",
+                            "is_safe": False,
+                            "policy_violation_message": "This message goes against the policies",
+                        },
+                        {
+                            "name": "no-wget",
+                            "is_safe": False,
+                            "policy_violation_message": "This message goes against the policies",
+                        },
+                    ]
+                }
+            }
+        )
+        self.assertEqual(
+            text,
+            "This message goes against the policies\n\nno-curl\nno-wget",
+        )
+
+    def test_all_safe_returns_default(self) -> None:
+        text = violation_message(
+            {
+                "security_guardrail_results": {"is_safe": True},
+                "policies_guardrail_results": {
+                    "policies": [{"name": "ok", "is_safe": True}]
+                },
+            }
+        )
+        self.assertEqual(text, "Blocked by Fireraven FireGuard.")
 
 
 class SerializeCursorTests(unittest.TestCase):
@@ -153,7 +259,11 @@ class HumanOverrideTests(unittest.TestCase):
                     ) as run:
                         decision = request_human_override("t", "blocked")
         self.assertEqual(decision, OverrideDecision.ALLOW)
-        self.assertEqual(run.call_args.args[0][0], "yad")
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[0], "yad")
+        self.assertNotIn("--question", argv)
+        self.assertIn("--text-align=left", argv)
+        self.assertIn("--window-icon=", argv)
 
     def test_yad_allow(self) -> None:
         with mock.patch.dict("os.environ", {"DISPLAY": ":0"}, clear=False):

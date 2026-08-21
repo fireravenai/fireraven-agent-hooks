@@ -101,17 +101,37 @@ def check_output_guardrail(
 
 
 def violation_message(result: dict, default: str = "Blocked by Fireraven FireGuard.") -> str:
+    """Build deny/dialog text: general message(s), then triggered policy names."""
+    headers: list[str] = []
+    names: list[str] = []
+    seen_headers: set[str] = set()
+
     security = result.get("security_guardrail_results") or {}
     if security.get("is_safe") is False:
-        message = security.get("security_violation_message")
+        message = str(security.get("security_violation_message") or "").strip()
         if message:
-            return str(message)
+            header = f"Security: {message}"
+            headers.append(header)
+            seen_headers.add(header)
 
     policies = (result.get("policies_guardrail_results") or {}).get("policies") or []
     for policy in policies:
-        if policy.get("is_safe") is False:
-            message = policy.get("policy_violation_message")
-            if message:
-                return str(message)
+        if policy.get("is_safe") is not False:
+            continue
+        name = str(policy.get("name") or "").strip()
+        message = str(policy.get("policy_violation_message") or "").strip()
+        if message and message not in seen_headers:
+            headers.append(message)
+            seen_headers.add(message)
+        if name:
+            names.append(name)
 
-    return default
+    if not headers and not names:
+        return default
+
+    parts: list[str] = []
+    if headers:
+        parts.append("\n".join(headers))
+    if names:
+        parts.append("\n".join(names))
+    return "\n\n".join(parts)
