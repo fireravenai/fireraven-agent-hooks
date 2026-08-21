@@ -12,7 +12,7 @@
   <img alt="GitHub Copilot" src="https://img.shields.io/badge/GitHub%20Copilot-guarded-24292F?style=for-the-badge&logo=githubcopilot&logoColor=white" />
 </p>
 
-FireGuard guardrails for AI coding agents: **Windsurf/Devin**, **Cursor**, **Claude Code**, **GitHub Copilot**, and **Microsoft Copilot Studio**.
+FireGuard guardrails for AI coding agents: **Windsurf/Cascade**, **Devin Local**, **Cursor**, **Claude Code**, **GitHub Copilot**, and **Microsoft Copilot Studio**.
 
 Block secret leakage, dangerous execution, and data poisoning at the hook layer — before prompts, shell commands, MCP calls, and file writes reach your agent.
 
@@ -132,19 +132,54 @@ The script installs into `C:\Users\<employee>\.claude\`, writes `hooks\config.en
 
 | Agent | Install | Hook config | Blocking |
 |-------|---------|-------------|----------|
-| Windsurf / Devin | `--agent windsurf` or `-Agent windsurf` | `~/.codeium/windsurf/hooks.json` | pre-hooks (exit 2) |
-| Cursor | `--agent cursor` or `-Agent cursor` | `~/.cursor/hooks.json` | JSON deny for prompts; OS dialog override for tool/shell/MCP/read/subagent blocks |
+| Windsurf / Cascade | `--agent windsurf` | `~/.codeium/windsurf/hooks.json` | pre-hooks (exit 2); OS dialog override for tool pre-hooks |
+| Devin Local | `--agent devin` | `~/.config/devin/config.json` (`%APPDATA%\devin\` on Windows) | `PreToolUse` OS dialog + `decision` approve/block; `UserPromptSubmit` exit 2 |
+| Cursor | `--agent cursor` | `~/.cursor/hooks.json` | JSON deny for prompts; OS dialog override for tool/shell/MCP/read/subagent blocks |
 | Claude Code | `--agent claude` | `~/.claude/settings.json` | `PreToolUse` ask-on-policy + `UserPromptSubmit` exit 2; `PostToolUse`/`Read` audit |
-| GitHub Copilot | `--agent github-copilot` | `~/.copilot/hooks/fireraven-fireguard.json` or `.github/hooks/fireraven-fireguard.json` | `preToolUse` (`permissionDecision: deny`) |
+| GitHub Copilot | `--agent github-copilot` | `~/.copilot/hooks/fireraven-fireguard.json` or `.github/hooks/fireraven-fireguard.json` | CLI: OS dialog then allow/deny on `preToolUse`; cloud: hard deny |
 | Microsoft Copilot Studio | `--agent copilot` | Studio connector topics | Flow conditions |
+
+### Human override matrix
+
+| Agent | Override UX |
+|-------|-------------|
+| Claude Code | Native IDE `permissionDecision: "ask"` with policy reason |
+| Cursor | OS dialog (yad → zenity → kdialog on Linux; osascript; MessageBox). Native `permission: "ask"` is **not** used — only `deny` is reliably enforced today |
+| Windsurf / Cascade | OS dialog, then exit `0` (allow) or exit `2` (deny). No native ask API |
+| Devin Local | OS dialog, then `{"decision":"approve"}` or `{"decision":"block","reason":"..."}` |
+| GitHub Copilot CLI | OS dialog on overridable `preToolUse`, then allow or `permissionDecision: deny`. Native `ask` is unreliable |
+| GitHub Copilot cloud | Hard deny only (no GUI → dialog unavailable → deny) |
+
+**Linux dialog prerequisites:** install **`yad`** (preferred), or `zenity`, or `kdialog`. The hook tries that order. A GUI session with `DISPLAY` or `WAYLAND_DISPLAY` is required. If no dialog tool is available, stderr logs an install hint and the action stays denied.
+
+**Troubleshooting — no popup on Linux**
+
+1. `which yad zenity kdialog`
+2. `echo "DISPLAY=$DISPLAY WAYLAND_DISPLAY=$WAYLAND_DISPLAY"`
+3. Check agent Hooks / Cascade output for `fireraven_override` and `decision=unavailable`
+4. Prefer `sudo apt install yad` (or `zenity` / `kdialog`)
 
 ## Hook events by platform
 
-### Windsurf / Devin
+### Windsurf / Cascade
 
 **Input (blocking):** `pre_user_prompt`, `pre_run_command`, `pre_mcp_tool_use`, `pre_write_code`, `pre_read_code`
 
 **Output (audit only):** `post_cascade_response`, `post_write_code`
+
+**Human override:** On FireGuard policy/security violations for tool pre-hooks (`pre_run_command`, `pre_mcp_tool_use`, `pre_write_code`, `pre_read_code`), the hook shows an OS Allow/Deny dialog. Allow → exit 0; Deny/unavailable → stderr + exit 2. `pre_user_prompt` stays hard deny. Local sensitive-path blocks and missing credentials are not overridable. Hook entries use `show_output: true` so deny reasons appear in Cascade UI.
+
+### Devin Local
+
+Devin Local is the local agent in Devin Desktop (Cascade’s successor), not cloud Devin. Use `--agent windsurf` for Cascade hooks and `--agent devin` for Devin Local.
+
+**Install:** `./fg install --agent devin` → scripts in `~/.config/devin/hooks/` and hook registration in `~/.config/devin/config.json`.
+
+**Input (blocking):** `PreToolUse` (all tools), `UserPromptSubmit`
+
+**Output (audit only):** `PostToolUse` (matcher for `read` / `notebook_read`)
+
+**Human override:** Overridable `PreToolUse` policy blocks use the OS dialog, then `decision: approve` or `decision: block` with reason. `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks are not overridable.
 
 ### Cursor
 
@@ -154,7 +189,7 @@ The script installs into `C:\Users\<employee>\.claude\`, writes `hooks\config.en
 
 Denies via JSON rather than exit codes. `beforeSubmitPrompt` uses `{"continue": false}`; other Cursor events use `{"permission": "deny"}`.
 
-**Human override:** On FireGuard policy/security violations for tool/shell/MCP/read/subagent gates, the hook shows a blocking OS confirmation dialog (zenity/kdialog on Linux, osascript on macOS, MessageBox on Windows). Allow continues once for that action; Deny/timeout/no-display keeps the deny. Local sensitive-path blocks (`.env`, keys, etc.) and missing credentials are **not** overridable. Prompt blocks stay hard deny (edit the prompt). Cursor’s native `permission: "ask"` is not used — it is not reliably enforced today.
+**Human override:** On FireGuard policy/security violations for tool/shell/MCP/read/subagent gates, the hook shows a blocking OS confirmation dialog (yad/zenity/kdialog on Linux, osascript on macOS, MessageBox on Windows). Allow continues once for that action; Deny/timeout/no-display keeps the deny. Local sensitive-path blocks (`.env`, keys, etc.) and missing credentials are **not** overridable. Prompt blocks stay hard deny (edit the prompt). Cursor’s native `permission: "ask"` is not used — it is not reliably enforced today.
 
 Cursor coverage is self-contained in `cursor_guardrail.py` / `~/.cursor/hooks.json`. If Cursor also loads Claude Code third-party hooks, Fireraven’s Claude adapter no-ops under Cursor so enforcement stays on these native Cursor hooks only.
 
@@ -178,7 +213,7 @@ If Cursor has **third-party Claude Code hooks** enabled, it may also invoke `~/.
 
 **Input (audit):** `userPromptSubmitted` — runs FireGuard check; Copilot does not process hook output (cannot block prompts)
 
-**Input (blocking):** `preToolUse` — denies via `{"permissionDecision":"deny","permissionDecisionReason":"..."}`
+**Input (blocking):** `preToolUse` — on overridable FireGuard policy/security violations, **Copilot CLI** shows an OS Allow/Deny dialog, then allows or returns `{"permissionDecision":"deny","permissionDecisionReason":"..."}`. **Cloud agent** has no GUI, so unavailable dialog → hard deny. Do not use native `permissionDecision: "ask"` (unreliable).
 
 **Output (audit only):** `postToolUse`
 
@@ -285,7 +320,8 @@ Edit `config.env` in each agent's hooks directory:
 | Agent | `config.env` path |
 |-------|-------------------|
 | Cursor | `~/.cursor/hooks/config.env` |
-| Windsurf / Devin | `~/.codeium/windsurf/hooks/config.env` |
+| Windsurf / Cascade | `~/.codeium/windsurf/hooks/config.env` |
+| Devin Local | `~/.config/devin/hooks/config.env` (`%APPDATA%\devin\hooks\` on Windows) |
 | Claude Code | `~/.claude/hooks/config.env` |
 | GitHub Copilot (CLI) | `~/.copilot/hooks/fireraven/config.env` |
 | GitHub Copilot (cloud agent) | `.github/hooks/fireraven/config.env` (gitignored) |
@@ -343,10 +379,11 @@ Restart your IDE(s) after editing `config.env`.
 |----------|---------|-------------|
 | `FIRERAVEN_HOOKS_REPO` | `fireravenai/fireraven-agent-hooks` | GitHub repo |
 | `FIRERAVEN_HOOKS_REF` | `main` | Branch or tag |
-| `FIRERAVEN_AGENT` | `windsurf` | Agent for install |
-| `FIRERAVEN_INSTALL_DIR` | `~/.codeium/windsurf` | Windsurf/Devin install dir |
+| `FIRERAVEN_AGENT` | `windsurf` | Agent for install (`windsurf`, `cursor`, `claude`, `devin`, `github-copilot`, `copilot`, `all`) |
+| `FIRERAVEN_INSTALL_DIR` | `~/.codeium/windsurf` | Windsurf/Cascade install dir |
 | `FIRERAVEN_CURSOR_INSTALL_DIR` | `~/.cursor` | Cursor install dir |
 | `FIRERAVEN_CLAUDE_INSTALL_DIR` | `~/.claude` | Claude Code install dir |
+| `FIRERAVEN_DEVIN_INSTALL_DIR` | `~/.config/devin` | Devin Local install dir |
 | `FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR` | `~/.copilot` | GitHub Copilot CLI install dir |
 | `FIRERAVEN_PROJECT_INSTALL` | `0` | Set to `1` or pass `--project` for cloud agent project install |
 

@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.human_override import OverrideDecision, request_human_override
+from core.human_override import OverrideDecision, request_human_override, resolve_override
 from core.serializers import (
     infer_claude_event,
     serialize_claude,
@@ -134,19 +134,169 @@ class HumanOverrideTests(unittest.TestCase):
             env = {k: v for k, v in __import__("os").environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
             with mock.patch.dict("os.environ", env, clear=True):
                 with mock.patch("core.human_override.platform.system", return_value="Linux"):
-                    decision = request_human_override("t", "m")
+                    with mock.patch("builtins.print") as printer:
+                        decision = request_human_override("t", "m")
         self.assertEqual(decision, OverrideDecision.UNAVAILABLE)
+        hint = " ".join(str(c) for c in printer.call_args_list)
+        self.assertIn("yad", hint)
 
-    def test_zenity_allow(self) -> None:
+    def test_yad_preferred_over_zenity(self) -> None:
         with mock.patch.dict("os.environ", {"DISPLAY": ":0"}, clear=False):
             with mock.patch("core.human_override.platform.system", return_value="Linux"):
-                with mock.patch("core.human_override.shutil.which", side_effect=lambda c: c == "zenity"):
+                with mock.patch(
+                    "core.human_override.shutil.which",
+                    side_effect=lambda c: c in ("yad", "zenity"),
+                ):
+                    with mock.patch(
+                        "core.human_override.subprocess.run",
+                        return_value=mock.Mock(returncode=0),
+                    ) as run:
+                        decision = request_human_override("t", "blocked")
+        self.assertEqual(decision, OverrideDecision.ALLOW)
+        self.assertEqual(run.call_args.args[0][0], "yad")
+
+    def test_yad_allow(self) -> None:
+        with mock.patch.dict("os.environ", {"DISPLAY": ":0"}, clear=False):
+            with mock.patch("core.human_override.platform.system", return_value="Linux"):
+                with mock.patch(
+                    "core.human_override.shutil.which",
+                    side_effect=lambda c: c == "yad",
+                ):
                     with mock.patch(
                         "core.human_override.subprocess.run",
                         return_value=mock.Mock(returncode=0),
                     ):
                         decision = request_human_override("t", "blocked")
         self.assertEqual(decision, OverrideDecision.ALLOW)
+
+    def test_yad_deny(self) -> None:
+        with mock.patch.dict("os.environ", {"DISPLAY": ":0"}, clear=False):
+            with mock.patch("core.human_override.platform.system", return_value="Linux"):
+                with mock.patch(
+                    "core.human_override.shutil.which",
+                    side_effect=lambda c: c == "yad",
+                ):
+                    with mock.patch(
+                        "core.human_override.subprocess.run",
+                        return_value=mock.Mock(returncode=1),
+                    ):
+                        decision = request_human_override("t", "blocked")
+        self.assertEqual(decision, OverrideDecision.DENY)
+
+    def test_zenity_when_yad_absent(self) -> None:
+        with mock.patch.dict("os.environ", {"DISPLAY": ":0"}, clear=False):
+            with mock.patch("core.human_override.platform.system", return_value="Linux"):
+                with mock.patch(
+                    "core.human_override.shutil.which",
+                    side_effect=lambda c: c == "zenity",
+                ):
+                    with mock.patch(
+                        "core.human_override.subprocess.run",
+                        return_value=mock.Mock(returncode=0),
+                    ) as run:
+                        decision = request_human_override("t", "blocked")
+        self.assertEqual(decision, OverrideDecision.ALLOW)
+        self.assertEqual(run.call_args.args[0][0], "zenity")
+
+    def test_unavailable_hint_when_no_dialog_tool(self) -> None:
+        with mock.patch.dict("os.environ", {"DISPLAY": ":0"}, clear=False):
+            with mock.patch("core.human_override.platform.system", return_value="Linux"):
+                with mock.patch("core.human_override.shutil.which", return_value=None):
+                    with mock.patch("builtins.print") as printer:
+                        decision = request_human_override("t", "m")
+        self.assertEqual(decision, OverrideDecision.UNAVAILABLE)
+        hint = " ".join(str(c) for c in printer.call_args_list)
+        self.assertIn("install yad", hint)
+
+
+class ResolveOverrideTests(unittest.TestCase):
+    def test_non_overridable_skips_dialog(self) -> None:
+        with mock.patch("core.human_override.request_human_override") as ask:
+            decision = resolve_override(
+                title="t",
+                message="m",
+                session_id="s",
+                event="pre_run_command",
+                overridable=False,
+                event_allows_override=True,
+            )
+        self.assertEqual(decision, OverrideDecision.DENY)
+        ask.assert_not_called()
+
+    def test_ineligible_event_skips_dialog(self) -> None:
+        with mock.patch("core.human_override.request_human_override") as ask:
+            decision = resolve_override(
+                title="t",
+                message="m",
+                session_id="s",
+                event="pre_user_prompt",
+                overridable=True,
+                event_allows_override=False,
+            )
+        self.assertEqual(decision, OverrideDecision.DENY)
+        ask.assert_not_called()
+
+
+class WindsurfAdapterOverrideTests(unittest.TestCase):
+    def test_policy_block_prompts_dialog_then_allows(self) -> None:
+        from adapters import windsurf as windsurf_adapter
+        from core.guardrail import GuardrailError
+
+        payload = {
+            "agent_action_name": "pre_run_command",
+            "trajectory_id": "s1",
+            "tool_info": {"command_line": "rm -rf /"},
+        }
+        with mock.patch.object(windsurf_adapter, "read_hook_input", return_value=payload):
+            with mock.patch.object(windsurf_adapter, "load_config", return_value={}):
+                with mock.patch.object(
+                    windsurf_adapter,
+                    "resolve_settings",
+                    return_value={"fail_closed": False},
+                ):
+                    with mock.patch.object(
+                        windsurf_adapter,
+                        "run_input_check",
+                        side_effect=GuardrailError("blocked by policy"),
+                    ):
+                        with mock.patch.object(
+                            windsurf_adapter,
+                            "resolve_override",
+                            return_value=OverrideDecision.ALLOW,
+                        ) as ask:
+                            with self.assertRaises(SystemExit) as cm:
+                                windsurf_adapter.main()
+        self.assertEqual(cm.exception.code, 0)
+        ask.assert_called_once()
+
+    def test_prompt_policy_hard_denies_without_dialog(self) -> None:
+        from adapters import windsurf as windsurf_adapter
+        from core.guardrail import GuardrailError
+
+        payload = {
+            "agent_action_name": "pre_user_prompt",
+            "trajectory_id": "s1",
+            "tool_info": {"user_prompt": "jailbreak"},
+        }
+        with mock.patch.object(windsurf_adapter, "read_hook_input", return_value=payload):
+            with mock.patch.object(windsurf_adapter, "load_config", return_value={}):
+                with mock.patch.object(
+                    windsurf_adapter,
+                    "resolve_settings",
+                    return_value={"fail_closed": False},
+                ):
+                    with mock.patch.object(
+                        windsurf_adapter,
+                        "run_input_check",
+                        side_effect=GuardrailError("blocked by policy"),
+                    ):
+                        with mock.patch(
+                            "core.human_override.request_human_override",
+                        ) as ask:
+                            with self.assertRaises(SystemExit) as cm:
+                                windsurf_adapter.main()
+        self.assertEqual(cm.exception.code, 2)
+        ask.assert_not_called()
 
 
 class CursorPretoolDeferTests(unittest.TestCase):
@@ -205,7 +355,7 @@ class CursorAdapterOverrideTests(unittest.TestCase):
                     ):
                         with mock.patch.object(
                             cursor_adapter,
-                            "request_human_override",
+                            "resolve_override",
                             return_value=OverrideDecision.ALLOW,
                         ) as ask:
                             with self.assertRaises(SystemExit) as cm:
@@ -228,9 +378,8 @@ class CursorAdapterOverrideTests(unittest.TestCase):
                     "resolve_settings",
                     return_value={"fail_closed": True},
                 ):
-                    with mock.patch.object(
-                        cursor_adapter,
-                        "request_human_override",
+                    with mock.patch(
+                        "core.human_override.request_human_override",
                     ) as ask:
                         with self.assertRaises(SystemExit) as cm:
                             cursor_adapter.main()

@@ -85,6 +85,9 @@ def _scrub_events(path: str, text: str, events: list[str], owned_markers: list[s
 CLAUDE_OWNED_MARKERS = ["fireraven", "claude_guardrail.py"]
 CLAUDE_EVENTS = ["PreToolUse", "UserPromptSubmit", "PostToolUse"]
 
+DEVIN_OWNED_MARKERS = ["fireraven", "devin_guardrail.py"]
+DEVIN_EVENTS = ["PreToolUse", "UserPromptSubmit", "PostToolUse"]
+
 # Per-event Cursor hook fields (matcher / failClosed) merged into each entry.
 # preToolUse uses .* so Cursor is self-sufficient without Claude third-party hooks.
 # The Cursor adapter skips Shell/Read/MCP here to avoid double-screening with
@@ -96,9 +99,16 @@ CURSOR_EVENT_OPTIONS: dict[str, dict] = {
 }
 
 
+def _default_devin_document() -> str:
+  return '{\n  "hooks": {}\n}\n'
+
+
 def cmd_merge_windsurf(args: argparse.Namespace) -> None:
   _ensure_parent(args.path)
-  entry = {"command": f"python3 {args.script_path}"}
+  entry = {
+    "command": f"python3 {args.script_path}",
+    "show_output": True,
+  }
   if args.powershell_command:
     entry["powershell"] = args.powershell_command
   _merge_events(
@@ -157,6 +167,37 @@ def cmd_merge_claude(args: argparse.Namespace) -> None:
   write_jsonc_file(args.path, text)
 
 
+def cmd_merge_devin(args: argparse.Namespace) -> None:
+  """Merge Devin Local lifecycle hooks into user/project config.json."""
+  _ensure_parent(args.path)
+  command = args.command or f"python3 {args.script_path}"
+  pretool_entry = {
+    "matcher": "",
+    "hooks": [{"type": "command", "command": command, "timeout": 45}],
+  }
+  prompt_entry = {
+    "matcher": "",
+    "hooks": [{"type": "command", "command": command, "timeout": 45}],
+  }
+  post_entry = {
+    "matcher": "^(read|notebook_read)$",
+    "hooks": [{"type": "command", "command": command, "timeout": 45}],
+  }
+  text = _read_text(args.path)
+  if not text.strip():
+    text = _default_devin_document()
+  for event, entry in [
+    ("PreToolUse", pretool_entry),
+    ("UserPromptSubmit", prompt_entry),
+    ("PostToolUse", post_entry),
+  ]:
+    try:
+      text = merge_hook_array(text, ["hooks", event], entry, DEVIN_OWNED_MARKERS)
+    except JsoncModifyError as exc:
+      _fail(args.path, exc)
+  write_jsonc_file(args.path, text)
+
+
 def cmd_merge_github_copilot(args: argparse.Namespace) -> None:
   _ensure_parent(args.path)
   entry = {
@@ -193,6 +234,15 @@ def cmd_scrub_claude(args: argparse.Namespace) -> None:
   )
 
 
+def cmd_scrub_devin(args: argparse.Namespace) -> None:
+  _scrub_events(
+    args.path,
+    _read_text(args.path),
+    DEVIN_EVENTS,
+    args.owned_pattern.split("|"),
+  )
+
+
 def cmd_scrub_github_copilot(args: argparse.Namespace) -> None:
   _scrub_events(args.path, _read_text(args.path), args.events.split(), args.owned_pattern.split("|"))
 
@@ -225,6 +275,12 @@ def build_parser() -> argparse.ArgumentParser:
   merge_claude.add_argument("--command", default="")
   merge_claude.set_defaults(func=cmd_merge_claude)
 
+  merge_devin = sub.add_parser("merge-devin")
+  merge_devin.add_argument("--path", required=True)
+  merge_devin.add_argument("--script-path", required=True)
+  merge_devin.add_argument("--command", default="")
+  merge_devin.set_defaults(func=cmd_merge_devin)
+
   merge_github_copilot = sub.add_parser("merge-github-copilot")
   add_common_merge_flags(merge_github_copilot)
   merge_github_copilot.add_argument("--script-path", required=True)
@@ -251,6 +307,11 @@ def build_parser() -> argparse.ArgumentParser:
   scrub_claude.add_argument("--path", required=True)
   scrub_claude.add_argument("--owned-pattern", required=True)
   scrub_claude.set_defaults(func=cmd_scrub_claude)
+
+  scrub_devin = sub.add_parser("scrub-devin")
+  scrub_devin.add_argument("--path", required=True)
+  scrub_devin.add_argument("--owned-pattern", required=True)
+  scrub_devin.set_defaults(func=cmd_scrub_devin)
 
   scrub_github_copilot = sub.add_parser("scrub-github-copilot")
   scrub_github_copilot.add_argument("--path", required=True)

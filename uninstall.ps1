@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("windsurf", "cursor", "claude", "github-copilot", "copilot", "all")]
+    [ValidateSet("windsurf", "cursor", "claude", "devin", "github-copilot", "copilot", "all")]
     [string]$Agent = $(if ($env:FIRERAVEN_AGENT) { $env:FIRERAVEN_AGENT } else { "all" }),
     [switch]$Project,
     [string]$HooksRepo = $(if ($env:FIRERAVEN_HOOKS_REPO) { $env:FIRERAVEN_HOOKS_REPO } else { "fireravenai/fireraven-agent-hooks" }),
@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Markers are literal substrings (not regex) matched against serialized hook entries.
-$FireravenEntryPattern = "fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|github_copilot_guardrail.py|run_github_copilot_guardrail.ps1"
+$FireravenEntryPattern = "fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|github_copilot_guardrail.py|run_github_copilot_guardrail.ps1|devin_guardrail.py"
 $WindsurfEvents = @("pre_user_prompt", "pre_run_command", "pre_mcp_tool_use", "pre_write_code", "pre_read_code", "post_cascade_response", "post_write_code")
 $CursorEvents = @("beforeSubmitPrompt", "beforeShellExecution", "beforeMCPExecution", "beforeReadFile", "preToolUse", "subagentStart", "afterFileEdit")
 $GitHubCopilotEvents = @("userPromptSubmitted", "preToolUse", "postToolUse")
@@ -50,6 +50,16 @@ function Get-ClaudeInstallDir {
         return $env:FIRERAVEN_CLAUDE_INSTALL_DIR
     }
     return (Join-Path (Get-UserHome) ".claude")
+}
+
+function Get-DevinInstallDir {
+    if ($env:FIRERAVEN_DEVIN_INSTALL_DIR) {
+        return $env:FIRERAVEN_DEVIN_INSTALL_DIR
+    }
+    if ($env:APPDATA) {
+        return (Join-Path $env:APPDATA "devin")
+    }
+    return (Join-Path (Get-UserHome) "AppData\Roaming\devin")
 }
 
 function Get-GitHubCopilotInstallDir {
@@ -191,6 +201,11 @@ switch ($Agent) {
             "--path", (Join-Path (Get-ClaudeInstallDir) "settings.json"),
             "--owned-pattern", $FireravenEntryPattern
         )
+        Invoke-MergeHooksConfig -PythonCommand $pythonCommand -RawBase $rawBase -Arguments @(
+            "scrub-devin",
+            "--path", (Join-Path (Get-DevinInstallDir) "config.json"),
+            "--owned-pattern", $FireravenEntryPattern
+        )
         Scrub-GitHubCopilotHooks -PythonCommand $pythonCommand -RawBase $rawBase -HooksJson (Get-GitHubCopilotHooksJson)
         if ($Project) {
             Scrub-GitHubCopilotHooks -PythonCommand $pythonCommand -RawBase $rawBase -HooksJson (Get-GitHubCopilotProjectHooksJson)
@@ -217,6 +232,13 @@ switch ($Agent) {
         Invoke-MergeHooksConfig -PythonCommand $pythonCommand -RawBase $rawBase -Arguments @(
             "scrub-claude",
             "--path", (Join-Path (Get-ClaudeInstallDir) "settings.json"),
+            "--owned-pattern", $FireravenEntryPattern
+        )
+    }
+    "devin" {
+        Invoke-MergeHooksConfig -PythonCommand $pythonCommand -RawBase $rawBase -Arguments @(
+            "scrub-devin",
+            "--path", (Join-Path (Get-DevinInstallDir) "config.json"),
             "--owned-pattern", $FireravenEntryPattern
         )
     }

@@ -6,10 +6,11 @@ Installed to each agent's hooks directory (e.g. `~/.codeium/windsurf/hooks/`).
 
 | Script | Agent | Invoked by |
 |--------|-------|------------|
-| `windsurf_guardrail.py` | Windsurf / Devin | `hooks.json` pre/post events |
+| `windsurf_guardrail.py` | Windsurf / Cascade | `hooks.json` pre/post events |
 | `cursor_guardrail.py` | Cursor | `hooks.json` before* / preToolUse / subagentStart / afterFileEdit |
 | `run_cursor_guardrail.ps1` | Cursor on Windows | Optional raw-stdin PowerShell fallback |
 | `claude_guardrail.py` | Claude Code | `settings.json` PreToolUse + UserPromptSubmit + PostToolUse(Read) |
+| `devin_guardrail.py` | Devin Local | `config.json` PreToolUse + UserPromptSubmit + PostToolUse |
 | `github_copilot_guardrail.py` | GitHub Copilot | `fireraven-fireguard.json` userPromptSubmitted / preToolUse / postToolUse |
 | `run_github_copilot_guardrail.ps1` | GitHub Copilot on Windows | Optional raw-stdin PowerShell fallback |
 | `fireraven_input_guardrail.py` | Windsurf | Backward-compatible alias |
@@ -34,7 +35,8 @@ After install, edit `config.env` in the agent's hooks directory. Restart the IDE
 | Agent | `config.env` path |
 |-------|-------------------|
 | Cursor | `~/.cursor/hooks/config.env` |
-| Windsurf / Devin | `~/.codeium/windsurf/hooks/config.env` |
+| Windsurf / Cascade | `~/.codeium/windsurf/hooks/config.env` |
+| Devin Local | `~/.config/devin/hooks/config.env` |
 | Claude Code | `~/.claude/hooks/config.env` |
 | GitHub Copilot | `~/.copilot/hooks/fireraven/config.env` or `.github/hooks/fireraven/config.env` (project) |
 
@@ -87,7 +89,7 @@ $LASTEXITCODE
 
 ## Manual test (Cursor)
 
-Cursor hooks must print a JSON decision to stdout. With `config.env` present, `beforeSubmitPrompt` should return `{"continue":true}` or `{"continue":false,...}`. Other Cursor events should return `{"permission":"allow"}` or `{"permission":"deny",...}`. On a FireGuard policy deny for shell/MCP/read/write/subagent, the hook may show an OS Allow/Deny dialog before deciding.
+Cursor hooks must print a JSON decision to stdout. With `config.env` present, `beforeSubmitPrompt` should return `{"continue":true}` or `{"continue":false,...}`. Other Cursor events should return `{"permission":"allow"}` or `{"permission":"deny",...}`. On a FireGuard policy deny for shell/MCP/read/write/subagent, the hook may show an OS Allow/Deny dialog (Linux: yad → zenity → kdialog) before deciding.
 
 ```bash
 echo '{"hook_event_name":"beforeSubmitPrompt","conversation_id":"test-001","prompt":"hello"}' \
@@ -120,6 +122,18 @@ PowerShell:
 '{"session_id":"test-001","hook_event_name":"UserPromptSubmit","prompt":"hello"}' | py -3 .\claude_guardrail.py
 ```
 
+## Manual test (Devin Local)
+
+Devin Local `UserPromptSubmit` denies via exit code 2. Overridable `PreToolUse` policy violations may show an OS dialog, then print `{"decision":"approve"}` or `{"decision":"block","reason":"..."}`.
+
+```bash
+echo '{"session_id":"test-001","hook_event_name":"PreToolUse","tool_name":"exec","tool_input":{"command":"echo hi"}}' \
+  | python3 devin_guardrail.py
+
+echo '{"session_id":"test-001","hook_event_name":"UserPromptSubmit","prompt":"hello"}' \
+  | python3 devin_guardrail.py
+```
+
 Fallback wrapper from `%USERPROFILE%\.cursor`:
 
 ```powershell
@@ -129,8 +143,9 @@ Fallback wrapper from `%USERPROFILE%\.cursor`:
 ## Windows runtime notes
 
 - Cursor on Windows should launch hooks with `py -3 hooks/cursor_guardrail.py` from `%USERPROFILE%\.cursor`. Use `powershell -NoProfile -ExecutionPolicy Bypass -File hooks/run_cursor_guardrail.ps1` only as a fallback if `py` is unavailable to Cursor.
-- Devin/Windsurf on Windows should use Cascade's `powershell` hook field with a direct Python invocation, not only the Unix `command` field.
-- The Windows user-level hook directories are `%USERPROFILE%\.cursor\hooks\` for Cursor and `%USERPROFILE%\.codeium\windsurf\hooks\` for Devin/Windsurf.
+- Windsurf/Cascade on Windows should use Cascade's `powershell` hook field with a direct Python invocation, not only the Unix `command` field.
+- Devin Local on Windows uses `%APPDATA%\devin\config.json` and `%APPDATA%\devin\hooks\`.
+- The Windows user-level hook directories are `%USERPROFILE%\.cursor\hooks\` for Cursor and `%USERPROFILE%\.codeium\windsurf\hooks\` for Windsurf/Cascade.
 - Restart the IDE after changing `hooks.json` or `config.env`.
 
 ## Layout after install
@@ -150,4 +165,5 @@ On Windows, the same package layout is installed under:
 ```text
 %USERPROFILE%\.codeium\windsurf\hooks\
 %USERPROFILE%\.cursor\hooks\
+%APPDATA%\devin\hooks\
 ```

@@ -72,10 +72,20 @@ FIRERAVEN_PROJECT_ID=your_project_id
 | Event | FireGuard action | Blocking? |
 |-------|------------------|-----------|
 | `userPromptSubmitted` | Input guardrail check | No — output is not processed by Copilot |
-| `preToolUse` | Input guardrail on tool call | Yes — `permissionDecision: deny` |
+| `preToolUse` | Input guardrail on tool call | Yes — OS dialog (CLI) then allow, or `permissionDecision: deny` |
 | `postToolUse` | Output audit on tool result | Audit only (stderr log if unsafe) |
 
 `preToolUse` is the primary enforcement point. Unlike Cursor, GitHub Copilot cannot block prompts via `userPromptSubmitted`.
+
+### Human override (CLI vs cloud)
+
+| Surface | Behavior |
+|---------|----------|
+| **Copilot CLI** (local desktop) | On overridable FireGuard policy/security violations, shows an OS Allow/Deny dialog (yad → zenity → kdialog on Linux). Allow continues once; Deny/unavailable keeps `permissionDecision: deny`. |
+| **Copilot cloud agent** | No GUI — dialog is unavailable → hard deny with reason. |
+| Native `permissionDecision: "ask"` | **Not used** — unreliable / often only `deny` is processed for shell hooks. |
+
+Local sensitive-path blocks and missing credentials are not overridable (no dialog).
 
 Deny response shape:
 

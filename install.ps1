@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("windsurf", "cursor", "claude", "github-copilot", "copilot", "all")]
+    [ValidateSet("windsurf", "cursor", "claude", "devin", "github-copilot", "copilot", "all")]
     [string]$Agent = $(if ($env:FIRERAVEN_AGENT) { $env:FIRERAVEN_AGENT } else { "windsurf" }),
     [switch]$Project,
     [string]$HooksRepo = $(if ($env:FIRERAVEN_HOOKS_REPO) { $env:FIRERAVEN_HOOKS_REPO } else { "fireravenai/fireraven-agent-hooks" }),
@@ -12,13 +12,14 @@ $Marker = "fireraven"
 $WindsurfScript = "windsurf_guardrail.py"
 $CursorScript = "cursor_guardrail.py"
 $ClaudeScript = "claude_guardrail.py"
+$DevinScript = "devin_guardrail.py"
 $GitHubCopilotScript = "github_copilot_guardrail.py"
 $WindsurfPreEvents = @("pre_user_prompt", "pre_run_command", "pre_mcp_tool_use", "pre_write_code", "pre_read_code")
 $WindsurfPostEvents = @("post_cascade_response", "post_write_code")
 $CursorEvents = @("beforeSubmitPrompt", "beforeShellExecution", "beforeMCPExecution", "beforeReadFile", "preToolUse", "subagentStart", "afterFileEdit")
 $GitHubCopilotEvents = @("userPromptSubmitted", "preToolUse", "postToolUse")
 # Markers are literal substrings (not regex) matched against serialized hook entries.
-$FireravenEntryPattern = "fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|github_copilot_guardrail.py|run_github_copilot_guardrail.ps1"
+$FireravenEntryPattern = "fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|github_copilot_guardrail.py|run_github_copilot_guardrail.ps1|devin_guardrail.py"
 
 function Write-Info {
     param([string]$Message)
@@ -58,6 +59,16 @@ function Get-ClaudeInstallDir {
     return (Join-Path (Get-UserHome) ".claude")
 }
 
+function Get-DevinInstallDir {
+    if ($env:FIRERAVEN_DEVIN_INSTALL_DIR) {
+        return $env:FIRERAVEN_DEVIN_INSTALL_DIR
+    }
+    if ($env:APPDATA) {
+        return (Join-Path $env:APPDATA "devin")
+    }
+    return (Join-Path (Get-UserHome) "AppData\Roaming\devin")
+}
+
 function Get-GitHubCopilotInstallDir {
     if ($env:FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR) {
         return $env:FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR
@@ -68,6 +79,7 @@ function Get-GitHubCopilotInstallDir {
 function Get-WindsurfHooksDir { Join-Path (Get-WindsurfInstallDir) "hooks" }
 function Get-CursorHooksDir { Join-Path (Get-CursorInstallDir) "hooks" }
 function Get-ClaudeHooksDir { Join-Path (Get-ClaudeInstallDir) "hooks" }
+function Get-DevinHooksDir { Join-Path (Get-DevinInstallDir) "hooks" }
 function Get-GitHubCopilotHooksDir { Join-Path (Get-GitHubCopilotInstallDir) "hooks\fireraven" }
 function Get-GitHubCopilotHooksJson { Join-Path (Get-GitHubCopilotInstallDir) "hooks\fireraven-fireguard.json" }
 function Get-GitHubCopilotProjectHooksDir { Join-Path (Get-Location) ".github\hooks\fireraven" }
@@ -219,7 +231,7 @@ function Copy-PackageTree {
         Copy-Item -Recurse -Force (Join-Path $SourceRoot $dir) $DestinationDir
     }
 
-    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "github_copilot_guardrail.py", "run_github_copilot_guardrail.ps1", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
+    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "devin_guardrail.py", "github_copilot_guardrail.py", "run_github_copilot_guardrail.ps1", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
         $source = Join-Path (Join-Path $SourceRoot "hooks") $file
         if (Test-Path $source) {
             Copy-Item -Force $source (Join-Path $DestinationDir $file)
@@ -258,12 +270,13 @@ function Download-PackageTree {
         "adapters/windsurf.py",
         "adapters/cursor.py",
         "adapters/claude.py",
+        "adapters/devin.py",
         "adapters/github_copilot.py"
     )) {
         Download-File -Url "$RawBase/$path" -Destination (Join-Path $DestinationDir ($path -replace "/", "\"))
     }
 
-    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "github_copilot_guardrail.py", "run_github_copilot_guardrail.ps1", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
+    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "devin_guardrail.py", "github_copilot_guardrail.py", "run_github_copilot_guardrail.ps1", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
         Download-File -Url "$RawBase/hooks/$file" -Destination (Join-Path $DestinationDir $file)
     }
 }
@@ -435,6 +448,25 @@ function Merge-ClaudeSettingsJson {
     Write-Info "Registered Claude Code hooks in $settingsJson"
 }
 
+function Merge-DevinConfigJson {
+    param(
+        [hashtable]$PythonCommand,
+        [string]$RawBase
+    )
+
+    $configJson = Join-Path (Get-DevinInstallDir) "config.json"
+    $scriptPath = Join-Path (Get-DevinHooksDir) $DevinScript
+    $hookCommand = (@($PythonCommand.FilePath) + @($PythonCommand.Arguments) + @($scriptPath)) -join " "
+
+    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -RawBase $RawBase -Arguments @(
+        "merge-devin",
+        "--path", $configJson,
+        "--script-path", $scriptPath,
+        "--command", $hookCommand
+    )
+    Write-Info "Registered Devin Local hooks in $configJson"
+}
+
 function Merge-GitHubCopilotHooksJson {
     param(
         [hashtable]$PythonCommand,
@@ -504,6 +536,18 @@ function Install-Claude {
     Merge-ClaudeSettingsJson -PythonCommand $PythonCommand -RawBase $RawBase
 }
 
+function Install-Devin {
+    param(
+        [hashtable]$PythonCommand,
+        [string]$RawBase
+    )
+    $destination = Get-DevinHooksDir
+    Write-Info "Installing Devin Local hooks to $destination"
+    Install-PackageTree -DestinationDir $destination
+    Ensure-ConfigEnv -DestinationDir $destination
+    Merge-DevinConfigJson -PythonCommand $PythonCommand -RawBase $RawBase
+}
+
 function Install-GitHubCopilot {
     param(
         [hashtable]$PythonCommand,
@@ -541,12 +585,14 @@ switch ($Agent) {
         Install-Windsurf -PythonCommand $pythonCommand -RawBase $rawBase
         Install-Cursor -PythonCommand $pythonCommand -RawBase $rawBase
         Install-Claude -PythonCommand $pythonCommand -RawBase $rawBase
+        Install-Devin -PythonCommand $pythonCommand -RawBase $rawBase
         Install-GitHubCopilot -PythonCommand $pythonCommand -RawBase $rawBase -Target user
         Write-Info "Copilot Studio uses connector topics in adapters/copilot/ (see README)"
     }
     "windsurf" { Install-Windsurf -PythonCommand $pythonCommand -RawBase $rawBase }
     "cursor" { Install-Cursor -PythonCommand $pythonCommand -RawBase $rawBase }
     "claude" { Install-Claude -PythonCommand $pythonCommand -RawBase $rawBase }
+    "devin" { Install-Devin -PythonCommand $pythonCommand -RawBase $rawBase }
     "github-copilot" {
         $target = if ($Project) { "project" } else { "user" }
         Install-GitHubCopilot -PythonCommand $pythonCommand -RawBase $rawBase -Target $target

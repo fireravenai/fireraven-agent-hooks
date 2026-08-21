@@ -108,5 +108,106 @@ class GitHubCopilotAdapterOutputTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
 
 
+class GitHubCopilotOverrideTests(unittest.TestCase):
+    def test_pretool_dialog_allow(self) -> None:
+        from core.guardrail import GuardrailError
+        from core.human_override import OverrideDecision
+
+        payload = {
+            "hook_event_name": "preToolUse",
+            "sessionId": "s1",
+            "toolName": "bash",
+            "toolArgs": {"command": "evil"},
+        }
+        with patch.object(github_copilot, "read_hook_input", return_value=payload):
+            with patch.object(github_copilot, "load_config", return_value={}):
+                with patch.object(
+                    github_copilot,
+                    "resolve_settings",
+                    return_value={"fail_closed": False},
+                ):
+                    with patch.object(
+                        github_copilot,
+                        "run_input_check",
+                        side_effect=GuardrailError("blocked by policy"),
+                    ):
+                        with patch.object(
+                            github_copilot,
+                            "resolve_override",
+                            return_value=OverrideDecision.ALLOW,
+                        ) as ask:
+                            with self.assertRaises(SystemExit) as cm:
+                                github_copilot.main()
+        self.assertEqual(cm.exception.code, 0)
+        ask.assert_called_once()
+
+    def test_pretool_dialog_deny(self) -> None:
+        from core.guardrail import GuardrailError
+        from core.human_override import OverrideDecision
+
+        payload = {
+            "hook_event_name": "preToolUse",
+            "sessionId": "s1",
+            "toolName": "bash",
+            "toolArgs": {"command": "evil"},
+        }
+        with patch.object(github_copilot, "read_hook_input", return_value=payload):
+            with patch.object(github_copilot, "load_config", return_value={}):
+                with patch.object(
+                    github_copilot,
+                    "resolve_settings",
+                    return_value={"fail_closed": False},
+                ):
+                    with patch.object(
+                        github_copilot,
+                        "run_input_check",
+                        side_effect=GuardrailError("blocked by policy"),
+                    ):
+                        with patch.object(
+                            github_copilot,
+                            "resolve_override",
+                            return_value=OverrideDecision.DENY,
+                        ):
+                            with patch("sys.stdout", new_callable=StringIO) as stdout:
+                                with self.assertRaises(SystemExit) as cm:
+                                    github_copilot.main()
+        self.assertEqual(cm.exception.code, 0)
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(data["permissionDecision"], "deny")
+
+    def test_local_block_skips_dialog(self) -> None:
+        from core.guardrail import GuardrailError
+
+        payload = {
+            "hook_event_name": "preToolUse",
+            "sessionId": "s1",
+            "toolName": "view",
+            "toolArgs": {"path": "/tmp/.env"},
+        }
+        with patch.object(github_copilot, "read_hook_input", return_value=payload):
+            with patch.object(github_copilot, "load_config", return_value={}):
+                with patch.object(
+                    github_copilot,
+                    "resolve_settings",
+                    return_value={"fail_closed": True},
+                ):
+                    with patch.object(
+                        github_copilot,
+                        "run_input_check",
+                        side_effect=GuardrailError(
+                            "Access to sensitive path blocked locally: /tmp/.env",
+                            overridable=False,
+                        ),
+                    ):
+                        with patch(
+                            "core.human_override.request_human_override",
+                        ) as ask:
+                            with patch("sys.stdout", new_callable=StringIO):
+                                with self.assertRaises(SystemExit) as cm:
+                                    github_copilot.main()
+        self.assertEqual(cm.exception.code, 0)
+        ask.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

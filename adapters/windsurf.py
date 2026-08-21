@@ -6,7 +6,16 @@ import sys
 from core.config import load_config, resolve_settings
 from core.guardrail import GuardrailError, handle_failure, run_input_check, run_output_audit
 from core.hook_io import read_hook_input
+from core.human_override import OverrideDecision, resolve_override
 from core.serializers import WINDSURF_INPUT_EVENTS, WINDSURF_OUTPUT_AUDIT_EVENTS, serialize_windsurf
+
+# Tool pre-hooks may show an OS Allow/Deny dialog. Prompts stay hard deny.
+WINDSURF_OVERRIDE_EVENTS = {
+    "pre_run_command",
+    "pre_mcp_tool_use",
+    "pre_write_code",
+    "pre_read_code",
+}
 
 
 def main() -> None:
@@ -50,6 +59,20 @@ def main() -> None:
 
     try:
         run_input_check(session_id, text, label="Windsurf Cascade")
+    except GuardrailError as exc:
+        message = str(exc)
+        decision = resolve_override(
+            title="Fireraven FireGuard",
+            message=message,
+            session_id=session_id or "windsurf-session",
+            event=action,
+            overridable=exc.overridable,
+            event_allows_override=action in WINDSURF_OVERRIDE_EVENTS,
+        )
+        if decision == OverrideDecision.ALLOW:
+            sys.exit(0)
+        print(message, file=sys.stderr)
+        sys.exit(2)
     except Exception as exc:
         handle_failure(exc, settings["fail_closed"])
         return

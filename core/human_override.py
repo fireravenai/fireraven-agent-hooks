@@ -16,6 +16,11 @@ class OverrideDecision(str, Enum):
 
 DEFAULT_TIMEOUT_SEC = 60
 
+_LINUX_UNAVAILABLE_HINT = (
+    "fireraven_override: no dialog available — install yad (preferred), "
+    "zenity, or kdialog, and ensure DISPLAY or WAYLAND_DISPLAY is set"
+)
+
 
 def log_override_audit(
     *,
@@ -30,6 +35,28 @@ def log_override_audit(
         f"decision={decision} detail={fingerprint}",
         file=sys.stderr,
     )
+
+
+def resolve_override(
+    *,
+    title: str,
+    message: str,
+    session_id: str,
+    event: str,
+    overridable: bool,
+    event_allows_override: bool,
+) -> OverrideDecision:
+    """Shared gate: deny immediately, or ask the human then audit."""
+    if not event_allows_override or not overridable:
+        return OverrideDecision.DENY
+    decision = request_human_override(title, message)
+    log_override_audit(
+        session_id=session_id,
+        event=event,
+        decision=decision.value,
+        message=message,
+    )
+    return decision
 
 
 def request_human_override(
@@ -55,7 +82,33 @@ def request_human_override(
 
 def _linux_dialog(title: str, message: str, timeout_sec: int) -> OverrideDecision:
     if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        print(_LINUX_UNAVAILABLE_HINT, file=sys.stderr)
         return OverrideDecision.UNAVAILABLE
+
+    prompt = f"{message}\n\nAllow this action anyway?"
+
+    if shutil.which("yad"):
+        result = subprocess.run(
+            [
+                "yad",
+                "--question",
+                f"--title={title}",
+                f"--text={prompt}",
+                "--text-align=center",
+                "--button=Allow:0",
+                "--button=Deny:1",
+                "--buttons-layout=center",
+                "--width=520",
+                "--center",
+                f"--timeout={int(timeout_sec)}",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return OverrideDecision.ALLOW
+        return OverrideDecision.DENY
 
     if shutil.which("zenity"):
         result = subprocess.run(
@@ -63,7 +116,7 @@ def _linux_dialog(title: str, message: str, timeout_sec: int) -> OverrideDecisio
                 "zenity",
                 "--question",
                 f"--title={title}",
-                f"--text={message}\n\nAllow this action anyway?",
+                f"--text={prompt}",
                 f"--timeout={timeout_sec}",
                 "--ok-label=Allow",
                 "--cancel-label=Deny",
@@ -84,7 +137,7 @@ def _linux_dialog(title: str, message: str, timeout_sec: int) -> OverrideDecisio
             [
                 "kdialog",
                 "--yesno",
-                f"{message}\n\nAllow this action anyway?",
+                prompt,
                 "--title",
                 title,
                 "--yes-label",
@@ -103,6 +156,7 @@ def _linux_dialog(title: str, message: str, timeout_sec: int) -> OverrideDecisio
             return OverrideDecision.DENY
         return OverrideDecision.UNAVAILABLE
 
+    print(_LINUX_UNAVAILABLE_HINT, file=sys.stderr)
     return OverrideDecision.UNAVAILABLE
 
 

@@ -28,9 +28,10 @@ check_python3
 case "$agent" in
     all)
         copy_package_tree "$REPO_ROOT" "$(windsurf_hooks_dir)"
-        mkdir -p "$(cursor_hooks_dir)" "$(claude_hooks_dir)" "$(github_copilot_hooks_dir)"
+        mkdir -p "$(cursor_hooks_dir)" "$(claude_hooks_dir)" "$(devin_hooks_dir)" "$(github_copilot_hooks_dir)"
         copy_package_tree "$REPO_ROOT" "$(cursor_hooks_dir)"
         copy_package_tree "$REPO_ROOT" "$(claude_hooks_dir)"
+        copy_package_tree "$REPO_ROOT" "$(devin_hooks_dir)"
         copy_package_tree "$REPO_ROOT" "$(github_copilot_hooks_dir)"
         install_all_agents
         ;;
@@ -45,6 +46,10 @@ case "$agent" in
     claude)
         copy_package_tree "$REPO_ROOT" "$(claude_hooks_dir)"
         install_claude
+        ;;
+    devin)
+        copy_package_tree "$REPO_ROOT" "$(devin_hooks_dir)"
+        install_devin
         ;;
     github-copilot)
         if [ "$project_install" = "1" ]; then

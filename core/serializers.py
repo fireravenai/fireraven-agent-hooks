@@ -318,6 +318,11 @@ def infer_claude_event(payload: dict) -> str:
     return ""
 
 
+def infer_devin_event(payload: dict) -> str:
+    """Devin Local uses the same event names as Claude Code lifecycle hooks."""
+    return infer_claude_event(payload)
+
+
 def serialize_claude(payload: dict) -> str | None:
     hook_event = infer_claude_event(payload)
     tool_name = payload.get("tool_name") or payload.get("name") or ""
@@ -344,5 +349,53 @@ def serialize_claude(payload: dict) -> str | None:
         return text or None
     if tool_name or tool_input:
         return f"Claude tool: {tool_name}\n{json.dumps(tool_input, indent=2)}"
+    prompt = (payload.get("prompt") or "").strip()
+    return prompt or None
+
+
+def serialize_devin(payload: dict) -> str | None:
+    hook_event = infer_devin_event(payload)
+    tool_name = payload.get("tool_name") or payload.get("name") or ""
+
+    if hook_event == "PostToolUse":
+        response = payload.get("tool_response")
+        if response is None:
+            response = payload.get("tool_result")
+        if response is None:
+            return None
+        if isinstance(response, str):
+            body = response.strip()
+            if not body:
+                return None
+            return f"Devin PostToolUse ({tool_name}):\n{_truncate(body)}"
+        return (
+            f"Devin PostToolUse ({tool_name}):\n"
+            f"{_truncate(json.dumps(response, indent=2))}"
+        )
+
+    if hook_event == "UserPromptSubmit":
+        prompt = (payload.get("prompt") or "").strip()
+        return prompt or None
+
+    tool_input = payload.get("tool_input") or payload.get("input") or payload.get("arguments") or {}
+    if isinstance(tool_input, str):
+        text = tool_input.strip()
+        return text or None
+
+    # Local sensitive-path block for file reads/writes.
+    if isinstance(tool_input, dict):
+        file_path = (
+            tool_input.get("path")
+            or tool_input.get("file_path")
+            or tool_input.get("filePath")
+            or ""
+        )
+        if isinstance(file_path, str) and file_path.strip():
+            blocked = local_sensitive_path_block(file_path.strip())
+            if blocked:
+                return f"__LOCAL_BLOCK__:{blocked}"
+
+    if tool_name or tool_input:
+        return f"Devin tool: {tool_name}\n{json.dumps(tool_input, indent=2)}"
     prompt = (payload.get("prompt") or "").strip()
     return prompt or None

@@ -6,6 +6,7 @@ import sys
 from core.config import load_config, resolve_settings
 from core.guardrail import GuardrailError, run_input_check, run_output_audit
 from core.hook_io import read_hook_input
+from core.human_override import OverrideDecision, resolve_override
 from core.serializers import (
     GITHUB_COPILOT_INPUT_EVENTS,
     GITHUB_COPILOT_OUTPUT_AUDIT_EVENTS,
@@ -97,6 +98,16 @@ def main() -> None:
         run_input_check(session_id, text, label="GitHub Copilot")
     except GuardrailError as exc:
         if hook_event == "preToolUse":
+            decision = resolve_override(
+                title="Fireraven FireGuard",
+                message=str(exc),
+                session_id=session_id,
+                event=hook_event,
+                overridable=exc.overridable,
+                event_allows_override=True,
+            )
+            if decision == OverrideDecision.ALLOW:
+                _allow()
             _deny(str(exc))
         print(str(exc), file=sys.stderr)
         _allow()

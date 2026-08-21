@@ -6,7 +6,7 @@ import sys
 from core.config import load_config, resolve_settings
 from core.guardrail import GuardrailError, run_input_check
 from core.hook_io import read_hook_input
-from core.human_override import OverrideDecision, log_override_audit, request_human_override
+from core.human_override import OverrideDecision, resolve_override
 from core.serializers import CURSOR_AUDIT_EVENTS, CURSOR_INPUT_EVENTS, serialize_cursor
 
 CURSOR_OVERRIDE_EVENTS = {
@@ -93,15 +93,13 @@ def infer_cursor_event(payload: dict) -> str:
 
 def _handle_policy_block(hook_event: str, session_id: str, exc: GuardrailError) -> None:
     message = str(exc)
-    if hook_event not in CURSOR_OVERRIDE_EVENTS or not exc.overridable:
-        _deny(hook_event, message)
-
-    decision = request_human_override("Fireraven FireGuard", message)
-    log_override_audit(
+    decision = resolve_override(
+        title="Fireraven FireGuard",
+        message=message,
         session_id=session_id,
         event=hook_event,
-        decision=decision.value,
-        message=message,
+        overridable=exc.overridable,
+        event_allows_override=hook_event in CURSOR_OVERRIDE_EVENTS,
     )
     if decision == OverrideDecision.ALLOW:
         _allow(hook_event)

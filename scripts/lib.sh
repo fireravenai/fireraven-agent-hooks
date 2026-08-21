@@ -9,13 +9,15 @@ WINDSURF_INSTALL_DIR="${FIRERAVEN_INSTALL_DIR:-$HOME/.codeium/windsurf}"
 CURSOR_INSTALL_DIR="${FIRERAVEN_CURSOR_INSTALL_DIR:-$HOME/.cursor}"
 CLAUDE_INSTALL_DIR="${FIRERAVEN_CLAUDE_INSTALL_DIR:-$HOME/.claude}"
 GITHUB_COPILOT_INSTALL_DIR="${FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR:-$HOME/.copilot}"
+DEVIN_INSTALL_DIR="${FIRERAVEN_DEVIN_INSTALL_DIR:-$HOME/.config/devin}"
 
 WINDSURF_SCRIPT="windsurf_guardrail.py"
 CURSOR_SCRIPT="cursor_guardrail.py"
 CLAUDE_SCRIPT="claude_guardrail.py"
 GITHUB_COPILOT_SCRIPT="github_copilot_guardrail.py"
+DEVIN_SCRIPT="devin_guardrail.py"
 MARKER="fireraven"
-FIRERAVEN_ENTRY_PATTERN="fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|github_copilot_guardrail.py|run_github_copilot_guardrail.ps1"
+FIRERAVEN_ENTRY_PATTERN="fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|github_copilot_guardrail.py|run_github_copilot_guardrail.ps1|devin_guardrail.py"
 
 WINDSURF_PRE_EVENTS="pre_user_prompt pre_run_command pre_mcp_tool_use pre_write_code pre_read_code"
 WINDSURF_POST_EVENTS="post_cascade_response post_write_code"
@@ -63,6 +65,7 @@ run_merge_hooks_config() {
 windsurf_hooks_dir() { printf '%s/hooks' "$WINDSURF_INSTALL_DIR"; }
 cursor_hooks_dir() { printf '%s/hooks' "$CURSOR_INSTALL_DIR"; }
 claude_hooks_dir() { printf '%s/hooks' "$CLAUDE_INSTALL_DIR"; }
+devin_hooks_dir() { printf '%s/hooks' "$DEVIN_INSTALL_DIR"; }
 github_copilot_hooks_dir() { printf '%s/hooks/fireraven' "$GITHUB_COPILOT_INSTALL_DIR"; }
 github_copilot_hooks_json() { printf '%s/hooks/fireraven-fireguard.json' "$GITHUB_COPILOT_INSTALL_DIR"; }
 github_copilot_project_hooks_dir() { printf '%s/.github/hooks/fireraven' "$(pwd)"; }
@@ -93,6 +96,7 @@ copy_package_tree() {
 
     for file in windsurf_guardrail.py cursor_guardrail.py run_cursor_guardrail.ps1 claude_guardrail.py \
         github_copilot_guardrail.py run_github_copilot_guardrail.ps1 \
+        devin_guardrail.py \
         fireraven_input_guardrail.py _bootstrap.py config.example.env README.md; do
         if [ -f "${src_root}/hooks/${file}" ]; then
             cp "${src_root}/hooks/${file}" "${dest_dir}/${file}"
@@ -110,7 +114,8 @@ download_package_tree() {
     for path in \
         core/__init__.py core/config.py core/session_store.py core/fireraven_client.py \
         core/serializers.py core/guardrail.py core/human_override.py core/hook_io.py \
-        adapters/__init__.py adapters/windsurf.py adapters/cursor.py adapters/claude.py adapters/github_copilot.py; do
+        adapters/__init__.py adapters/windsurf.py adapters/cursor.py adapters/claude.py \
+        adapters/github_copilot.py adapters/devin.py; do
         url="${raw_base}/${path}"
         mkdir -p "${dest_dir}/$(dirname "$path")"
         info "Downloading ${path}"
@@ -119,6 +124,7 @@ download_package_tree() {
 
     for file in _bootstrap.py windsurf_guardrail.py cursor_guardrail.py run_cursor_guardrail.ps1 claude_guardrail.py \
         github_copilot_guardrail.py run_github_copilot_guardrail.ps1 \
+        devin_guardrail.py \
         fireraven_input_guardrail.py config.example.env README.md; do
         url="${raw_base}/hooks/${file}"
         info "Downloading hooks/${file}"
@@ -156,6 +162,15 @@ merge_claude_settings_json() {
 
     run_merge_hooks_config merge-claude \
         --path "$settings_json" \
+        --script-path "$script_path"
+}
+
+merge_devin_config_json() {
+    config_json="${DEVIN_INSTALL_DIR}/config.json"
+    script_path="$(devin_hooks_dir)/${DEVIN_SCRIPT}"
+
+    run_merge_hooks_config merge-devin \
+        --path "$config_json" \
         --script-path "$script_path"
 }
 
@@ -205,6 +220,13 @@ install_claude() {
     info "Registered Claude hooks in ${CLAUDE_INSTALL_DIR}/settings.json"
 }
 
+install_devin() {
+    info "Installing Devin Local hooks to $(devin_hooks_dir)"
+    setup_config_env "$(devin_hooks_dir)"
+    merge_devin_config_json
+    info "Registered Devin Local hooks in ${DEVIN_INSTALL_DIR}/config.json"
+}
+
 install_github_copilot() {
     info "Installing GitHub Copilot hooks to $(github_copilot_hooks_dir)"
     setup_config_env "$(github_copilot_hooks_dir)"
@@ -226,6 +248,7 @@ install_agent() {
         windsurf) install_windsurf ;;
         cursor) install_cursor ;;
         claude) install_claude ;;
+        devin) install_devin ;;
         github-copilot)
             if [ "${FIRERAVEN_PROJECT_INSTALL:-0}" = "1" ]; then
                 install_github_copilot_project
@@ -242,6 +265,7 @@ install_all_agents() {
     install_windsurf
     install_cursor
     install_claude
+    install_devin
     install_github_copilot
     info "Copilot Studio: see adapters/copilot/README.md for Studio setup"
 }
@@ -270,6 +294,13 @@ remove_agent_hooks() {
         claude|all)
             run_merge_hooks_config scrub-claude \
                 --path "${CLAUDE_INSTALL_DIR}/settings.json" \
+                --owned-pattern "$FIRERAVEN_ENTRY_PATTERN"
+            ;;
+    esac
+    case "$agent" in
+        devin|all)
+            run_merge_hooks_config scrub-devin \
+                --path "${DEVIN_INSTALL_DIR}/config.json" \
                 --owned-pattern "$FIRERAVEN_ENTRY_PATTERN"
             ;;
     esac

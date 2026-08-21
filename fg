@@ -12,14 +12,14 @@ usage() {
 Fireraven agent hooks CLI
 
 Usage:
-  fg install [--agent windsurf|cursor|claude|github-copilot|copilot|all] [--project]
+  fg install [--agent windsurf|cursor|claude|devin|github-copilot|copilot|all] [--project]
   fg init      Interactive config setup for Windsurf hooks
   fg doctor    Check python3, config, and hook registration
-  fg uninstall [--agent all|windsurf|cursor|claude|github-copilot] [--project]
+  fg uninstall [--agent all|windsurf|cursor|claude|devin|github-copilot] [--project]
 
 Environment:
   FIRERAVEN_INSTALL_DIR, FIRERAVEN_CURSOR_INSTALL_DIR, FIRERAVEN_CLAUDE_INSTALL_DIR
-  FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR, FIRERAVEN_PROJECT_INSTALL
+  FIRERAVEN_DEVIN_INSTALL_DIR, FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR, FIRERAVEN_PROJECT_INSTALL
 EOF
 }
 
@@ -64,6 +64,7 @@ cmd_doctor() {
         "Windsurf:$(windsurf_hooks_dir)" \
         "Cursor:$(cursor_hooks_dir)" \
         "Claude:$(claude_hooks_dir)" \
+        "Devin Local:$(devin_hooks_dir)" \
         "GitHub Copilot:$(github_copilot_hooks_dir)"; do
         label="${label_dir%%:*}"
         dir="${label_dir#*:}"
@@ -74,7 +75,9 @@ cmd_doctor() {
             warn "config.env missing"
             ok=1
         fi
-        if [ -f "${dir}/github_copilot_guardrail.py" ] || [ -f "${dir}/cursor_guardrail.py" ] || [ -f "${dir}/windsurf_guardrail.py" ]; then
+        if [ -f "${dir}/github_copilot_guardrail.py" ] || [ -f "${dir}/cursor_guardrail.py" ] \
+            || [ -f "${dir}/windsurf_guardrail.py" ] || [ -f "${dir}/devin_guardrail.py" ] \
+            || [ -f "${dir}/claude_guardrail.py" ]; then
             info "hook scripts present"
         else
             warn "hook scripts not installed"
