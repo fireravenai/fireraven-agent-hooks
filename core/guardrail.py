@@ -12,6 +12,7 @@ from core.fireraven_client import (
     violation_message,
 )
 from core.session_store import append_history, get_messages_history, load, update
+from core.unavailable_notice import emit_unavailable_notice
 
 
 class GuardrailError(Exception):
@@ -120,11 +121,12 @@ def run_output_audit(session_id: str, output_text: str) -> dict | None:
     return result
 
 
-def handle_failure(exc: Exception, fail_closed: bool) -> None:
+def handle_failure(exc: Exception, fail_closed: bool, session_id: str = "") -> None:
     if isinstance(exc, GuardrailError):
         print(str(exc), file=sys.stderr)
         sys.exit(2)
     if fail_closed:
         print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
         sys.exit(2)
+    emit_unavailable_notice(session_id or "unknown-session")
     sys.exit(0)

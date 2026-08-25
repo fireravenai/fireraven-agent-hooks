@@ -9,6 +9,7 @@ from core.guardrail import GuardrailError, run_input_check
 from core.hook_io import read_hook_input
 from core.human_override import log_override_audit
 from core.serializers import infer_claude_event, serialize_claude
+from core.unavailable_notice import UNAVAILABLE_MESSAGE, emit_unavailable_notice
 
 
 def invoked_from_cursor(payload: dict) -> bool:
@@ -110,6 +111,10 @@ def main() -> None:
             if settings["fail_closed"]:
                 print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
                 _post_tool_warn(f"Fireraven guardrail hook: {exc}")
+            else:
+                notice = emit_unavailable_notice(session_id)
+                if notice:
+                    _post_tool_warn(UNAVAILABLE_MESSAGE)
         sys.exit(0)
 
     try:
@@ -129,6 +134,7 @@ def main() -> None:
         if settings["fail_closed"]:
             print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
             sys.exit(2)
+        emit_unavailable_notice(session_id)
         sys.exit(0)
 
     sys.exit(0)

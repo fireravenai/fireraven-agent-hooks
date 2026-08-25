@@ -368,8 +368,8 @@ This value is sent as `execution_mode` on each input and output guardrail API ca
 
 | Value | When to use |
 |-------|-------------|
-| `closed` | Block the agent action when the hook cannot reach FireGuard (network error, timeout, HTTP error). Use for strict production enforcement. |
-| `open` | **Default.** Allow the agent action through on transient FireGuard API failures. Policy violations and missing `FIRERAVEN_*` credentials still block. |
+| `closed` | Block the agent action when the hook cannot reach FireGuard (network error, timeout, HTTP error). Use for strict production / paid enforcement. |
+| `open` | **Default.** Allow the agent action through on transient FireGuard API failures. Shows a once-per-session short notice (`FireGuard unavailable`) via OS toast and, on Cursor, `user_message` on the allow response (stderr also logs for Output → Hooks). Traffic is **not** monitored until FireGuard recovers. Policy violations and missing `FIRERAVEN_*` credentials still block. |
 
 Restart your IDE(s) after editing `config.env`.
 

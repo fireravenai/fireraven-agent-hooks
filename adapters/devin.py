@@ -8,6 +8,7 @@ from core.guardrail import GuardrailError, run_input_check, run_output_audit
 from core.hook_io import read_hook_input
 from core.human_override import OverrideDecision, resolve_override
 from core.serializers import infer_devin_event, serialize_devin
+from core.unavailable_notice import emit_unavailable_notice
 
 
 def _approve() -> None:
@@ -59,6 +60,8 @@ def main() -> None:
         except Exception as exc:
             if settings["fail_closed"]:
                 print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
+            else:
+                emit_unavailable_notice(session_id)
         sys.exit(0)
 
     if hook_event not in ("PreToolUse", "UserPromptSubmit"):
@@ -86,6 +89,7 @@ def main() -> None:
             if hook_event == "PreToolUse":
                 _block(f"Fireraven guardrail hook: {exc}")
             _deny_exit(f"Fireraven guardrail hook: {exc}")
+        emit_unavailable_notice(session_id)
         sys.exit(0)
 
     sys.exit(0)

@@ -8,6 +8,7 @@ from core.guardrail import GuardrailError, run_input_check
 from core.hook_io import read_hook_input
 from core.human_override import OverrideDecision, resolve_override
 from core.serializers import CURSOR_AUDIT_EVENTS, CURSOR_INPUT_EVENTS, serialize_cursor
+from core.unavailable_notice import emit_unavailable_notice
 
 CURSOR_OVERRIDE_EVENTS = {
     "beforeShellExecution",
@@ -37,14 +38,20 @@ def pretool_deferred_to_specialized(tool_name: str) -> bool:
     return False
 
 
-def _allow(hook_event: str) -> None:
+def _allow(hook_event: str, user_message: str | None = None) -> None:
     if hook_event == "beforeSubmitPrompt":
-        print(json.dumps({"continue": True}))
+        payload: dict = {"continue": True}
+        if user_message:
+            payload["user_message"] = user_message
+        print(json.dumps(payload))
     elif hook_event == "afterFileEdit":
         # afterFileEdit has no decision control; empty success is fine.
         print("{}")
     else:
-        print(json.dumps({"permission": "allow"}))
+        payload = {"permission": "allow"}
+        if user_message:
+            payload["user_message"] = user_message
+        print(json.dumps(payload))
     sys.exit(0)
 
 
@@ -143,6 +150,7 @@ def main() -> None:
         _allow(hook_event)
 
     if hook_event in CURSOR_AUDIT_EVENTS:
+        notice: str | None = None
         try:
             run_input_check(session_id, text, label="Cursor")
         except GuardrailError as exc:
@@ -165,7 +173,9 @@ def main() -> None:
                     ),
                     file=sys.stderr,
                 )
-        _allow(hook_event)
+            else:
+                notice = emit_unavailable_notice(session_id)
+        _allow(hook_event, user_message=notice)
 
     try:
         run_input_check(session_id, text, label="Cursor")
@@ -174,7 +184,8 @@ def main() -> None:
     except Exception as exc:
         if fail_closed:
             _deny(hook_event, f"Fireraven guardrail hook: {exc}")
-        _allow(hook_event)
+        notice = emit_unavailable_notice(session_id)
+        _allow(hook_event, user_message=notice)
 
     _allow(hook_event)
 

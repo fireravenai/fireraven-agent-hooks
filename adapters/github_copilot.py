@@ -12,6 +12,7 @@ from core.serializers import (
     GITHUB_COPILOT_OUTPUT_AUDIT_EVENTS,
     serialize_github_copilot,
 )
+from core.unavailable_notice import emit_unavailable_notice
 
 _EVENT_ALIASES = {
     "userpromptsubmit": "userPromptSubmitted",
@@ -112,11 +113,11 @@ def main() -> None:
         print(str(exc), file=sys.stderr)
         _allow()
     except Exception as exc:
-        if hook_event == "preToolUse" and fail_closed:
-            _deny(f"Fireraven guardrail hook: {exc}")
-        if hook_event == "preToolUse":
+        if fail_closed:
+            if hook_event == "preToolUse":
+                _deny(f"Fireraven guardrail hook: {exc}")
             _fail_closed(f"Fireraven guardrail hook: {exc}")
-        print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
+        emit_unavailable_notice(session_id)
         _allow()
 
     _allow()

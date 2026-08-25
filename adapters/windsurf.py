@@ -43,7 +43,7 @@ def main() -> None:
                 run_output_audit(session_id, text)
             except Exception as exc:
                 if settings["fail_closed"]:
-                    handle_failure(exc, True)
+                    handle_failure(exc, True, session_id)
         sys.exit(0)
 
     if action not in WINDSURF_INPUT_EVENTS:
@@ -74,7 +74,7 @@ def main() -> None:
         print(message, file=sys.stderr)
         sys.exit(2)
     except Exception as exc:
-        handle_failure(exc, settings["fail_closed"])
+        handle_failure(exc, settings["fail_closed"], session_id)
         return
 
     sys.exit(0)
