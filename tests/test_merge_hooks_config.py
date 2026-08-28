@@ -120,6 +120,21 @@ def _run_merge_claude(path: Path, script_path: str, command: str = "") -> None:
     subprocess.run(args, check=True, cwd=REPO_ROOT)
 
 
+def _run_merge_devin(path: Path, script_path: str, command: str = "") -> None:
+    args = [
+        sys.executable,
+        str(SCRIPTS_DIR / "merge_hooks_config.py"),
+        "merge-devin",
+        "--path",
+        str(path),
+        "--script-path",
+        script_path,
+    ]
+    if command:
+        args.extend(["--command", command])
+    subprocess.run(args, check=True, cwd=REPO_ROOT)
+
+
 def _run_scrub_claude(path: Path) -> None:
     subprocess.run(
         [
@@ -355,6 +370,75 @@ class MergeClaudeHooksConfigTests(unittest.TestCase):
 
         self.assertEqual(len(data["hooks"]["UserPromptSubmit"]), 1)
         self.assertEqual(data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], command)
+
+
+class MergeDevinHooksConfigTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.mkdtemp()
+        self.config_path = Path(self.temp_dir) / "config.json"
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_registers_windows_forward_slash_command(self) -> None:
+        script_path = "C:/Users/test/AppData/Roaming/devin/hooks/devin_guardrail.py"
+        command = f"py -3 {script_path}"
+        _run_merge_devin(self.config_path, script_path, command=command)
+
+        data = json.loads(_strip_comments(self.config_path.read_text(encoding="utf-8")))
+        hooks = data["hooks"]
+
+        self.assertEqual(len(hooks["PreToolUse"]), 1)
+        self.assertEqual(hooks["PreToolUse"][0]["hooks"][0]["command"], command)
+        self.assertNotIn("\\", hooks["PreToolUse"][0]["hooks"][0]["command"])
+
+        self.assertEqual(len(hooks["UserPromptSubmit"]), 1)
+        self.assertEqual(hooks["UserPromptSubmit"][0]["hooks"][0]["command"], command)
+
+        self.assertEqual(len(hooks["PostToolUse"]), 1)
+        self.assertEqual(hooks["PostToolUse"][0]["matcher"], "^(read|notebook_read)$")
+        self.assertEqual(hooks["PostToolUse"][0]["hooks"][0]["command"], command)
+
+    def test_replaces_backslash_windows_command(self) -> None:
+        script_path = "C:/Users/test/AppData/Roaming/devin/hooks/devin_guardrail.py"
+        broken_command = (
+            r"C:\Users\test\AppData\Local\Programs\Python\Python312\python.exe "
+            r"C:\Users\test\AppData\Roaming\devin\hooks\devin_guardrail.py"
+        )
+        fixed_command = f"py -3 {script_path}"
+        self.config_path.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [
+                            {
+                                "matcher": "",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": broken_command,
+                                        "timeout": 45,
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        _run_merge_devin(self.config_path, script_path, command=fixed_command)
+        data = json.loads(_strip_comments(self.config_path.read_text(encoding="utf-8")))
+
+        self.assertEqual(len(data["hooks"]["PreToolUse"]), 1)
+        self.assertEqual(data["hooks"]["PreToolUse"][0]["hooks"][0]["command"], fixed_command)
+        self.assertEqual(
+            data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
+            fixed_command,
+        )
 
 
 if __name__ == "__main__":

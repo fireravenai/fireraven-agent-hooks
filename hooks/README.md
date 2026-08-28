@@ -104,7 +104,7 @@ PowerShell:
 
 ## Manual test (Claude Code)
 
-Claude Code `UserPromptSubmit` denies via exit code 2. `PreToolUse` policy violations return JSON `permissionDecision: "ask"` (exit 0) so the IDE can prompt the user. Local sensitive-path blocks still use exit 2. `PostToolUse`/`Read` is audit-only.
+Claude Code `UserPromptSubmit` denies via exit code 2. Overridable `PreToolUse` policy violations show an OS Allow/Deny dialog, then allow (exit 0) or return JSON `permissionDecision: "deny"` with the policy reason. Local sensitive-path blocks still use exit 2. `PostToolUse`/`Read` is audit-only.
 
 ```bash
 echo '{"session_id":"test-001","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo hi"}}' \

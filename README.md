@@ -135,7 +135,7 @@ The script installs into `C:\Users\<employee>\.claude\`, writes `hooks\config.en
 | Windsurf / Cascade | `--agent windsurf` | `~/.codeium/windsurf/hooks.json` | pre-hooks (exit 2); OS dialog override for tool pre-hooks |
 | Devin Local | `--agent devin` | `~/.config/devin/config.json` (`%APPDATA%\devin\` on Windows) | `PreToolUse` OS dialog + `decision` approve/block; `UserPromptSubmit` exit 2 |
 | Cursor | `--agent cursor` | `~/.cursor/hooks.json` | JSON deny for prompts; OS dialog override for tool/shell/MCP/read/subagent blocks |
-| Claude Code | `--agent claude` | `~/.claude/settings.json` | `PreToolUse` ask-on-policy + `UserPromptSubmit` exit 2; `PostToolUse`/`Read` audit |
+| Claude Code | `--agent claude` | `~/.claude/settings.json` | `PreToolUse` OS dialog override + `UserPromptSubmit` exit 2; `PostToolUse`/`Read` audit |
 | GitHub Copilot | `--agent github-copilot` | `~/.copilot/hooks/fireraven-fireguard.json` or `.github/hooks/fireraven-fireguard.json` | CLI: OS dialog then allow/deny on `preToolUse`; cloud: hard deny |
 | Microsoft Copilot Studio | `--agent copilot` | Studio connector topics | Flow conditions |
 
@@ -143,7 +143,7 @@ The script installs into `C:\Users\<employee>\.claude\`, writes `hooks\config.en
 
 | Agent | Override UX |
 |-------|-------------|
-| Claude Code | Native IDE `permissionDecision: "ask"` with policy reason |
+| Claude Code | OS dialog on overridable `PreToolUse`, then allow or `permissionDecision: deny` with policy reason. Native `ask` is unreliable in the VS Code extension |
 | Cursor | OS dialog (yad → zenity → kdialog on Linux; osascript; MessageBox). Native `permission: "ask"` is **not** used — only `deny` is reliably enforced today |
 | Windsurf / Cascade | OS dialog, then exit `0` (allow) or exit `2` (deny). No native ask API |
 | Devin Local | OS dialog, then `{"decision":"approve"}` or `{"decision":"block","reason":"..."}` |
@@ -201,7 +201,7 @@ Cursor coverage is self-contained in `cursor_guardrail.py` / `~/.cursor/hooks.js
 
 **Output (audit only):** `PostToolUse` (matcher `Read`) — screens read body after the tool ran; cannot undo; warns via `systemMessage` / `additionalContext`
 
-**Human override:** On FireGuard policy/security violations for `PreToolUse`, the hook returns `permissionDecision: "ask"` so Claude Code’s UI prompts the user to Allow/Deny. That click is the override (no config flip). `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks and missing credentials are not overridable.
+**Human override:** On FireGuard policy/security violations for `PreToolUse`, the hook shows an OS Allow/Deny dialog (same as Cursor/Copilot). Allow continues once; Deny/unavailable returns `permissionDecision: "deny"` with the policy reason (native `ask` is unreliable in the VS Code Claude extension). `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks and missing credentials are not overridable.
 
 `FileChanged` and `SubagentStart` are not registered as guardrail gates (`SubagentStart` cannot block; Agent prompts are already covered by `PreToolUse`).
 
@@ -303,12 +303,25 @@ Piping a PowerShell string into Python can add a UTF-8 BOM and break JSON parsin
 3. Submit a policy-violating prompt — Claude Code should block it with a `UserPromptSubmit` hook error before responding.
 4. Confirm a "Claude Code" conversation appears in the FireGuard dashboard (including prompt-only sessions with no tools).
 
+### Devin Local on Windows
+
+The PowerShell installer writes:
+
+| File | Purpose |
+|------|---------|
+| `%APPDATA%\devin\config.json` | Devin Local hook registration |
+| `%APPDATA%\devin\hooks\` | Fireraven hook scripts and config |
+| `%APPDATA%\devin\hooks\config.env` | Fireraven credentials |
+
+Like Claude Code, Devin Local runs hook commands through a POSIX-style shell that treats `\` as escapes. The installer registers hooks as `py -3` with a forward-slash absolute path — for example `py -3 C:/Users/you/AppData/Roaming/devin/hooks/devin_guardrail.py`. Re-run `install.ps1 -Agent devin` after upgrading so existing backslash commands are replaced.
+
 ### Windows troubleshooting
 
 - If PowerShell blocks the script, run the local clone command with `-ExecutionPolicy Bypass`.
 - If Python is missing, install Python 3 and enable **Add python.exe to PATH**, or use the Python launcher so `py -3 --version` works.
 - If Cursor hooks do not run, open **View > Output > Hooks** and confirm the command is `py -3 hooks/cursor_guardrail.py`, or switch to the `run_cursor_guardrail.ps1` fallback above.
 - If Devin/Windsurf hooks do not run, confirm `%USERPROFILE%\.codeium\windsurf\hooks.json` contains a direct Python `powershell` field for each Fireraven hook event.
+- If Devin Local hooks fail with a glued path like `UsersjsAppDataRoamingdevinhooks...`, re-run `install.ps1 -Agent devin` and confirm `%APPDATA%\devin\config.json` uses `py -3 C:/.../devin_guardrail.py` (forward slashes, no `\`).
 - If Claude Code hooks do not run, confirm `%USERPROFILE%\.claude\settings.json` uses direct `py -3 C:/.../claude_guardrail.py` commands (no `powershell` wrapper) for both `PreToolUse` and `UserPromptSubmit`.
 - If credentials fail, edit the `config.env` file under the installed agent's `hooks` directory and restart the IDE.
 - If install fails with a JSONC parse error on `hooks.json`, fix syntax errors in the file (comments alone are supported). The installer preserves `//` comments and non-Fireraven hook entries.

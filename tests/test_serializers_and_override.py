@@ -525,10 +525,11 @@ class CursorAdapterOverrideTests(unittest.TestCase):
         ask.assert_not_called()
 
 
-class ClaudeAdapterAskTests(unittest.TestCase):
-    def test_pretool_policy_returns_ask_json(self) -> None:
+class ClaudeAdapterOverrideTests(unittest.TestCase):
+    def test_pretool_policy_deny_returns_deny_json(self) -> None:
         from adapters import claude as claude_adapter
         from core.guardrail import GuardrailError
+        from core.human_override import OverrideDecision
 
         payload = {
             "hook_event_name": "PreToolUse",
@@ -548,10 +549,16 @@ class ClaudeAdapterAskTests(unittest.TestCase):
                         "run_input_check",
                         side_effect=GuardrailError("blocked by policy"),
                     ):
-                        with mock.patch("builtins.print") as printer:
-                            with self.assertRaises(SystemExit) as cm:
-                                claude_adapter.main()
+                        with mock.patch.object(
+                            claude_adapter,
+                            "resolve_override",
+                            return_value=OverrideDecision.DENY,
+                        ) as override:
+                            with mock.patch("builtins.print") as printer:
+                                with self.assertRaises(SystemExit) as cm:
+                                    claude_adapter.main()
         self.assertEqual(cm.exception.code, 0)
+        override.assert_called_once()
         printed = None
         for call in printer.call_args_list:
             args = call.args
@@ -562,8 +569,54 @@ class ClaudeAdapterAskTests(unittest.TestCase):
         assert printed is not None
         self.assertEqual(
             printed["hookSpecificOutput"]["permissionDecision"],
-            "ask",
+            "deny",
         )
+        self.assertEqual(
+            printed["hookSpecificOutput"]["permissionDecisionReason"],
+            "blocked by policy",
+        )
+
+    def test_pretool_policy_allow_exits_0_without_deny_json(self) -> None:
+        from adapters import claude as claude_adapter
+        from core.guardrail import GuardrailError
+        from core.human_override import OverrideDecision
+
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "session_id": "s1",
+            "tool_name": "Bash",
+            "tool_input": {"command": "evil"},
+        }
+        with mock.patch.object(claude_adapter, "read_hook_input", return_value=payload):
+            with mock.patch.object(claude_adapter, "load_config", return_value={}):
+                with mock.patch.object(
+                    claude_adapter,
+                    "resolve_settings",
+                    return_value={"fail_closed": False},
+                ):
+                    with mock.patch.object(
+                        claude_adapter,
+                        "run_input_check",
+                        side_effect=GuardrailError("blocked by policy"),
+                    ):
+                        with mock.patch.object(
+                            claude_adapter,
+                            "resolve_override",
+                            return_value=OverrideDecision.ALLOW,
+                        ) as override:
+                            with mock.patch("builtins.print") as printer:
+                                with self.assertRaises(SystemExit) as cm:
+                                    claude_adapter.main()
+        self.assertEqual(cm.exception.code, 0)
+        override.assert_called_once()
+        for call in printer.call_args_list:
+            args = call.args
+            if args and isinstance(args[0], str) and args[0].startswith("{"):
+                printed = json.loads(args[0])
+                self.assertNotEqual(
+                    printed.get("hookSpecificOutput", {}).get("permissionDecision"),
+                    "deny",
+                )
 
     def test_cursor_bridged_invocation_is_skipped(self) -> None:
         from adapters import claude as claude_adapter
@@ -582,15 +635,15 @@ class ClaudeAdapterAskTests(unittest.TestCase):
         self.assertEqual(cm.exception.code, 0)
         check.assert_not_called()
 
-    def test_claude_native_pretool_still_runs(self) -> None:
+    def test_non_overridable_pretool_exits_2(self) -> None:
         from adapters import claude as claude_adapter
         from core.guardrail import GuardrailError
 
         payload = {
             "hook_event_name": "PreToolUse",
             "session_id": "s1",
-            "tool_name": "Bash",
-            "tool_input": {"command": "evil"},
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/proj/.env"},
         }
         with mock.patch.object(claude_adapter, "read_hook_input", return_value=payload):
             with mock.patch.object(claude_adapter, "load_config", return_value={}):
@@ -602,21 +655,19 @@ class ClaudeAdapterAskTests(unittest.TestCase):
                     with mock.patch.object(
                         claude_adapter,
                         "run_input_check",
-                        side_effect=GuardrailError("blocked by policy"),
+                        side_effect=GuardrailError(
+                            "Access to sensitive path blocked locally",
+                            overridable=False,
+                        ),
                     ):
-                        with mock.patch("builtins.print") as printer:
+                        with mock.patch.object(
+                            claude_adapter,
+                            "resolve_override",
+                        ) as override:
                             with self.assertRaises(SystemExit) as cm:
                                 claude_adapter.main()
-        self.assertEqual(cm.exception.code, 0)
-        printed = None
-        for call in printer.call_args_list:
-            args = call.args
-            if args and isinstance(args[0], str) and args[0].startswith("{"):
-                printed = json.loads(args[0])
-                break
-        self.assertIsNotNone(printed)
-        assert printed is not None
-        self.assertEqual(printed["hookSpecificOutput"]["permissionDecision"], "ask")
+        self.assertEqual(cm.exception.code, 2)
+        override.assert_not_called()
 
     def test_user_prompt_still_exits_2(self) -> None:
         from adapters import claude as claude_adapter

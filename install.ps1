@@ -160,8 +160,10 @@ function New-CursorDirectHookCommand {
     return "py -3 hooks/cursor_guardrail.py"
 }
 
-function New-ClaudeDirectHookCommand {
+function New-DirectPyHookCommand {
     param([string]$ScriptPath)
+    # Forward slashes: Devin Local / Claude Code run hooks via a POSIX shell that
+    # treats backslashes as escapes (C:\Users\... becomes C:Users...).
     $normalized = $ScriptPath -replace '\\', '/'
     return "py -3 $normalized"
 }
@@ -443,7 +445,7 @@ function Merge-ClaudeSettingsJson {
         "merge-claude",
         "--path", $settingsJson,
         "--script-path", $scriptPath,
-        "--command", (New-ClaudeDirectHookCommand -ScriptPath $scriptPath)
+        "--command", (New-DirectPyHookCommand -ScriptPath $scriptPath)
     )
     Write-Info "Registered Claude Code hooks in $settingsJson"
 }
@@ -456,13 +458,12 @@ function Merge-DevinConfigJson {
 
     $configJson = Join-Path (Get-DevinInstallDir) "config.json"
     $scriptPath = Join-Path (Get-DevinHooksDir) $DevinScript
-    $hookCommand = (@($PythonCommand.FilePath) + @($PythonCommand.Arguments) + @($scriptPath)) -join " "
 
     Invoke-MergeHooksConfig -PythonCommand $PythonCommand -RawBase $RawBase -Arguments @(
         "merge-devin",
         "--path", $configJson,
         "--script-path", $scriptPath,
-        "--command", $hookCommand
+        "--command", (New-DirectPyHookCommand -ScriptPath $scriptPath)
     )
     Write-Info "Registered Devin Local hooks in $configJson"
 }

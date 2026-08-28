@@ -7,7 +7,7 @@ import sys
 from core.config import load_config, resolve_settings
 from core.guardrail import GuardrailError, run_input_check
 from core.hook_io import read_hook_input
-from core.human_override import log_override_audit
+from core.human_override import OverrideDecision, resolve_override
 from core.serializers import infer_claude_event, serialize_claude
 from core.unavailable_notice import UNAVAILABLE_MESSAGE, emit_unavailable_notice
 
@@ -26,13 +26,13 @@ def invoked_from_cursor(payload: dict) -> bool:
     return bool(os.environ.get("CURSOR_VERSION", "").strip())
 
 
-def _ask_pretool(message: str) -> None:
+def _deny_pretool(message: str) -> None:
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
-                    "permissionDecision": "ask",
+                    "permissionDecision": "deny",
                     "permissionDecisionReason": message,
                 }
             }
@@ -122,13 +122,17 @@ def main() -> None:
     except GuardrailError as exc:
         message = str(exc)
         if hook_event == "PreToolUse" and exc.overridable:
-            log_override_audit(
+            decision = resolve_override(
+                title="Fireraven FireGuard",
+                message=message,
                 session_id=session_id,
                 event=hook_event,
-                decision="ask",
-                message=message,
+                overridable=True,
+                event_allows_override=True,
             )
-            _ask_pretool(message)
+            if decision == OverrideDecision.ALLOW:
+                sys.exit(0)
+            _deny_pretool(message)
         _deny_exit(message)
     except Exception as exc:
         if settings["fail_closed"]:
