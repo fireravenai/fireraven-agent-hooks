@@ -7,7 +7,7 @@
         "bash": "python3 PLACEHOLDER_SCRIPT_PATH",
         "powershell": "py -3 PLACEHOLDER_SCRIPT_PATH",
         "cwd": ".",
-        "timeoutSec": 45
+        "timeoutSec": 600
       }
     ],
     "preToolUse": [
@@ -16,7 +16,7 @@
         "bash": "python3 PLACEHOLDER_SCRIPT_PATH",
         "powershell": "py -3 PLACEHOLDER_SCRIPT_PATH",
         "cwd": ".",
-        "timeoutSec": 45
+        "timeoutSec": 600
       }
     ],
     "postToolUse": [
@@ -25,7 +25,7 @@
         "bash": "python3 PLACEHOLDER_SCRIPT_PATH",
         "powershell": "py -3 PLACEHOLDER_SCRIPT_PATH",
         "cwd": ".",
-        "timeoutSec": 45
+        "timeoutSec": 600
       }
     ]
   }

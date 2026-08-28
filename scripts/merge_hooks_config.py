@@ -88,6 +88,9 @@ CLAUDE_EVENTS = ["PreToolUse", "UserPromptSubmit", "PostToolUse"]
 DEVIN_OWNED_MARKERS = ["fireraven", "devin_guardrail.py"]
 DEVIN_EVENTS = ["PreToolUse", "UserPromptSubmit", "PostToolUse"]
 
+# Host hook timeout: keep human override dialogs from being killed early.
+HOOK_TIMEOUT_SEC = 600
+
 # Per-event Cursor hook fields (matcher / failClosed) merged into each entry.
 # preToolUse uses .* so Cursor is self-sufficient without Claude third-party hooks.
 # The Cursor adapter skips Shell/Read/MCP here to avoid double-screening with
@@ -129,7 +132,7 @@ def cmd_merge_cursor(args: argparse.Namespace) -> None:
     text = _default_cursor_document()
   owned_markers = args.owned_pattern.split("|")
   for event in args.events.split():
-    entry: dict = {"command": command}
+    entry: dict = {"command": command, "timeout": HOOK_TIMEOUT_SEC}
     entry.update(CURSOR_EVENT_OPTIONS.get(event, {}))
     try:
       text = merge_hook_array(text, ["hooks", event], entry, owned_markers)
@@ -143,14 +146,14 @@ def cmd_merge_claude(args: argparse.Namespace) -> None:
   command = args.command or f"python3 {args.script_path}"
   pretool_entry = {
     "matcher": ".*",
-    "hooks": [{"type": "command", "command": command}],
+    "hooks": [{"type": "command", "command": command, "timeout": HOOK_TIMEOUT_SEC}],
   }
   prompt_entry = {
-    "hooks": [{"type": "command", "command": command}],
+    "hooks": [{"type": "command", "command": command, "timeout": HOOK_TIMEOUT_SEC}],
   }
   post_read_entry = {
     "matcher": "Read",
-    "hooks": [{"type": "command", "command": command}],
+    "hooks": [{"type": "command", "command": command, "timeout": HOOK_TIMEOUT_SEC}],
   }
   text = _read_text(args.path)
   if not text.strip():
@@ -173,15 +176,15 @@ def cmd_merge_devin(args: argparse.Namespace) -> None:
   command = args.command or f"python3 {args.script_path}"
   pretool_entry = {
     "matcher": "",
-    "hooks": [{"type": "command", "command": command, "timeout": 45}],
+    "hooks": [{"type": "command", "command": command, "timeout": HOOK_TIMEOUT_SEC}],
   }
   prompt_entry = {
     "matcher": "",
-    "hooks": [{"type": "command", "command": command, "timeout": 45}],
+    "hooks": [{"type": "command", "command": command, "timeout": HOOK_TIMEOUT_SEC}],
   }
   post_entry = {
     "matcher": "^(read|notebook_read)$",
-    "hooks": [{"type": "command", "command": command, "timeout": 45}],
+    "hooks": [{"type": "command", "command": command, "timeout": HOOK_TIMEOUT_SEC}],
   }
   text = _read_text(args.path)
   if not text.strip():
@@ -288,7 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
   merge_github_copilot.add_argument("--bash-command", default="")
   merge_github_copilot.add_argument("--powershell-command", default="")
   merge_github_copilot.add_argument("--cwd", default=".")
-  merge_github_copilot.add_argument("--timeout-sec", type=int, default=45)
+  merge_github_copilot.add_argument("--timeout-sec", type=int, default=HOOK_TIMEOUT_SEC)
   merge_github_copilot.set_defaults(func=cmd_merge_github_copilot)
 
   scrub_windsurf = sub.add_parser("scrub-windsurf")

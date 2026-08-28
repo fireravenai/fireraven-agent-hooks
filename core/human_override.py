@@ -65,7 +65,12 @@ def request_human_override(
     *,
     timeout_sec: int = DEFAULT_TIMEOUT_SEC,
 ) -> OverrideDecision:
-    """Block until the user answers an OS dialog, or return UNAVAILABLE."""
+    """Block until the user answers an OS dialog, or return UNAVAILABLE.
+
+    Only an explicit Allow click continues. Window close, Esc, dialog timeout,
+    cancel, and any other non-Allow outcome map to DENY (fail closed).
+    UNAVAILABLE is reserved for no display / no dialog tool available.
+    """
     body = (message or "FireGuard blocked this action.").strip()
     if len(body) > 1500:
         body = body[:1500] + "…"
@@ -77,7 +82,14 @@ def request_human_override(
             return _windows_dialog(title, body, timeout_sec)
         return _linux_dialog(title, body, timeout_sec)
     except Exception:
-        return OverrideDecision.UNAVAILABLE
+        return OverrideDecision.DENY
+
+
+def _allow_only_zero(returncode: int | None) -> OverrideDecision:
+    """Map dialog tool exit codes: 0 = Allow, anything else = Deny."""
+    if returncode == 0:
+        return OverrideDecision.ALLOW
+    return OverrideDecision.DENY
 
 
 def _linux_dialog(title: str, message: str, timeout_sec: int) -> OverrideDecision:
@@ -90,6 +102,7 @@ def _linux_dialog(title: str, message: str, timeout_sec: int) -> OverrideDecisio
     if shutil.which("yad"):
         # Plain dialog (not --question) avoids stock icons; empty window-icon
         # clears the title-bar glyph when the toolkit allows it.
+        # Allow=0; Deny/close/Esc/timeout(70)/WM kill = non-zero → Deny.
         result = subprocess.run(
             [
                 "yad",
@@ -109,11 +122,10 @@ def _linux_dialog(title: str, message: str, timeout_sec: int) -> OverrideDecisio
             capture_output=True,
             text=True,
         )
-        if result.returncode == 0:
-            return OverrideDecision.ALLOW
-        return OverrideDecision.DENY
+        return _allow_only_zero(result.returncode)
 
     if shutil.which("zenity"):
+        # zenity: 0=Allow, 1=cancel/close, 5=timeout — all non-zero → Deny.
         result = subprocess.run(
             [
                 "zenity",
@@ -128,36 +140,30 @@ def _linux_dialog(title: str, message: str, timeout_sec: int) -> OverrideDecisio
             capture_output=True,
             text=True,
         )
-        # zenity: 0=OK, 1=cancel, 5=timeout
-        if result.returncode == 0:
-            return OverrideDecision.ALLOW
-        if result.returncode in (1, 5):
-            return OverrideDecision.DENY
-        return OverrideDecision.UNAVAILABLE
+        return _allow_only_zero(result.returncode)
 
     if shutil.which("kdialog"):
-        result = subprocess.run(
-            [
-                "kdialog",
-                "--yesno",
-                prompt,
-                "--title",
-                title,
-                "--yes-label",
-                "Allow",
-                "--no-label",
-                "Deny",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
-        )
-        if result.returncode == 0:
-            return OverrideDecision.ALLOW
-        if result.returncode == 1:
+        try:
+            result = subprocess.run(
+                [
+                    "kdialog",
+                    "--yesno",
+                    prompt,
+                    "--title",
+                    title,
+                    "--yes-label",
+                    "Allow",
+                    "--no-label",
+                    "Deny",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+            )
+        except subprocess.TimeoutExpired:
             return OverrideDecision.DENY
-        return OverrideDecision.UNAVAILABLE
+        return _allow_only_zero(result.returncode)
 
     print(_LINUX_UNAVAILABLE_HINT, file=sys.stderr)
     return OverrideDecision.UNAVAILABLE
@@ -172,13 +178,16 @@ def _macos_dialog(title: str, message: str, timeout_sec: int) -> OverrideDecisio
         f'buttons {{"Deny", "Allow"}} default button "Deny" '
         f"giving up after {int(timeout_sec)}"
     )
-    result = subprocess.run(
-        ["osascript", "-e", script],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=timeout_sec + 5,
-    )
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec + 5,
+        )
+    except subprocess.TimeoutExpired:
+        return OverrideDecision.DENY
     if result.returncode != 0:
         return OverrideDecision.DENY
     out = (result.stdout or "").lower()
@@ -190,7 +199,7 @@ def _macos_dialog(title: str, message: str, timeout_sec: int) -> OverrideDecisio
 
 
 def _windows_dialog(title: str, message: str, timeout_sec: int) -> OverrideDecision:
-    # MessageBox Yes/No; Yes = Allow. No native timeout without extra UI.
+    # MessageBox Yes/No; Yes = Allow. X/No/any non-Yes = Deny.
     ps = (
         "Add-Type -AssemblyName System.Windows.Forms; "
         "$r = [System.Windows.Forms.MessageBox]::Show("
@@ -199,15 +208,14 @@ def _windows_dialog(title: str, message: str, timeout_sec: int) -> OverrideDecis
         "'YesNo', 'Warning'); "
         "if ($r -eq 'Yes') { exit 0 } else { exit 1 }"
     )
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=timeout_sec + 5,
-    )
-    if result.returncode == 0:
-        return OverrideDecision.ALLOW
-    if result.returncode == 1:
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec + 5,
+        )
+    except subprocess.TimeoutExpired:
         return OverrideDecision.DENY
-    return OverrideDecision.UNAVAILABLE
+    return _allow_only_zero(result.returncode)

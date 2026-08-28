@@ -321,6 +321,20 @@ class HumanOverrideTests(unittest.TestCase):
                         decision = request_human_override("t", "blocked")
         self.assertEqual(decision, OverrideDecision.DENY)
 
+    def test_yad_timeout_is_deny(self) -> None:
+        with mock.patch.dict("os.environ", {"DISPLAY": ":0"}, clear=False):
+            with mock.patch("core.human_override.platform.system", return_value="Linux"):
+                with mock.patch(
+                    "core.human_override.shutil.which",
+                    side_effect=lambda c: c == "yad",
+                ):
+                    with mock.patch(
+                        "core.human_override.subprocess.run",
+                        return_value=mock.Mock(returncode=70),
+                    ):
+                        decision = request_human_override("t", "blocked")
+        self.assertEqual(decision, OverrideDecision.DENY)
+
     def test_zenity_when_yad_absent(self) -> None:
         with mock.patch.dict("os.environ", {"DISPLAY": ":0"}, clear=False):
             with mock.patch("core.human_override.platform.system", return_value="Linux"):
@@ -335,6 +349,21 @@ class HumanOverrideTests(unittest.TestCase):
                         decision = request_human_override("t", "blocked")
         self.assertEqual(decision, OverrideDecision.ALLOW)
         self.assertEqual(run.call_args.args[0][0], "zenity")
+
+    def test_zenity_timeout_and_unknown_are_deny(self) -> None:
+        with mock.patch.dict("os.environ", {"DISPLAY": ":0"}, clear=False):
+            with mock.patch("core.human_override.platform.system", return_value="Linux"):
+                with mock.patch(
+                    "core.human_override.shutil.which",
+                    side_effect=lambda c: c == "zenity",
+                ):
+                    for code in (1, 5, 99):
+                        with mock.patch(
+                            "core.human_override.subprocess.run",
+                            return_value=mock.Mock(returncode=code),
+                        ):
+                            decision = request_human_override("t", "blocked")
+                        self.assertEqual(decision, OverrideDecision.DENY, msg=f"code={code}")
 
     def test_unavailable_hint_when_no_dialog_tool(self) -> None:
         with mock.patch.dict("os.environ", {"DISPLAY": ":0"}, clear=False):

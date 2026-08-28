@@ -104,7 +104,7 @@ PowerShell:
 
 ## Manual test (Claude Code)
 
-Claude Code `UserPromptSubmit` denies via exit code 2. Overridable `PreToolUse` policy violations: terminal CLI returns JSON `permissionDecision: "ask"` with the policy reason; VS Code plugin and Claude Code Desktop show an OS Allow/Deny dialog, then allow (exit 0) or return `permissionDecision: "deny"`. Local sensitive-path blocks still use exit 2. `PostToolUse`/`Read` is audit-only.
+Claude Code `UserPromptSubmit` denies via exit code 2. Overridable `PreToolUse` policy violations: terminal CLI returns JSON `permissionDecision: "ask"` with the policy reason; VS Code plugin and Claude Code Desktop show an OS Allow/Deny dialog, then allow (exit 0) or return `permissionDecision: "deny"`. Closing the popup without Allow keeps the deny. Local sensitive-path blocks still use exit 2. `PostToolUse`/`Read` is audit-only.
 
 ```bash
 echo '{"session_id":"test-001","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo hi"}}' \

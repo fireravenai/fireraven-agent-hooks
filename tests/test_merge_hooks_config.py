@@ -187,6 +187,7 @@ class MergeHooksConfigTests(unittest.TestCase):
         )
         self.assertEqual(fireraven_pretool["matcher"], ".*")
         self.assertTrue(fireraven_pretool.get("failClosed"))
+        self.assertEqual(fireraven_pretool.get("timeout"), 600)
 
         for event in CURSOR_EVENTS.split():
             self.assertTrue(hooks[event], msg=f"missing {event}")
@@ -196,6 +197,7 @@ class MergeHooksConfigTests(unittest.TestCase):
                 if "cursor_guardrail.py" in entry.get("command", "")
             ]
             self.assertEqual(len(fireraven_entries), 1, msg=event)
+            self.assertEqual(fireraven_entries[0].get("timeout"), 600, msg=event)
 
         self.assertTrue(hooks["beforeReadFile"][0].get("failClosed"))
         self.assertTrue(hooks["beforeMCPExecution"][0].get("failClosed"))
@@ -242,7 +244,7 @@ class MergeGitHubCopilotHooksConfigTests(unittest.TestCase):
             entry = hooks[event][0]
             self.assertEqual(entry["type"], "command")
             self.assertIn("github_copilot_guardrail.py", entry["bash"])
-            self.assertEqual(entry["timeoutSec"], 45)
+            self.assertEqual(entry["timeoutSec"], 600)
 
     def test_idempotent_merge_and_scrub(self) -> None:
         script_path = "/tmp/github_copilot_guardrail.py"
@@ -273,16 +275,19 @@ class MergeClaudeHooksConfigTests(unittest.TestCase):
         pretool = hooks["PreToolUse"][0]
         self.assertEqual(pretool["matcher"], ".*")
         self.assertEqual(pretool["hooks"][0]["command"], command)
+        self.assertEqual(pretool["hooks"][0]["timeout"], 600)
 
         self.assertEqual(len(hooks["UserPromptSubmit"]), 1)
         prompt = hooks["UserPromptSubmit"][0]
         self.assertNotIn("matcher", prompt)
         self.assertEqual(prompt["hooks"][0]["command"], command)
+        self.assertEqual(prompt["hooks"][0]["timeout"], 600)
 
         self.assertEqual(len(hooks["PostToolUse"]), 1)
         post = hooks["PostToolUse"][0]
         self.assertEqual(post["matcher"], "Read")
         self.assertEqual(post["hooks"][0]["command"], command)
+        self.assertEqual(post["hooks"][0]["timeout"], 600)
 
     def test_replaces_broken_windows_command(self) -> None:
         script_path = "C:/Users/test/.claude/hooks/claude_guardrail.py"
@@ -390,14 +395,17 @@ class MergeDevinHooksConfigTests(unittest.TestCase):
 
         self.assertEqual(len(hooks["PreToolUse"]), 1)
         self.assertEqual(hooks["PreToolUse"][0]["hooks"][0]["command"], command)
+        self.assertEqual(hooks["PreToolUse"][0]["hooks"][0]["timeout"], 600)
         self.assertNotIn("\\", hooks["PreToolUse"][0]["hooks"][0]["command"])
 
         self.assertEqual(len(hooks["UserPromptSubmit"]), 1)
         self.assertEqual(hooks["UserPromptSubmit"][0]["hooks"][0]["command"], command)
+        self.assertEqual(hooks["UserPromptSubmit"][0]["hooks"][0]["timeout"], 600)
 
         self.assertEqual(len(hooks["PostToolUse"]), 1)
         self.assertEqual(hooks["PostToolUse"][0]["matcher"], "^(read|notebook_read)$")
         self.assertEqual(hooks["PostToolUse"][0]["hooks"][0]["command"], command)
+        self.assertEqual(hooks["PostToolUse"][0]["hooks"][0]["timeout"], 600)
 
     def test_replaces_backslash_windows_command(self) -> None:
         script_path = "C:/Users/test/AppData/Roaming/devin/hooks/devin_guardrail.py"
@@ -435,6 +443,7 @@ class MergeDevinHooksConfigTests(unittest.TestCase):
 
         self.assertEqual(len(data["hooks"]["PreToolUse"]), 1)
         self.assertEqual(data["hooks"]["PreToolUse"][0]["hooks"][0]["command"], fixed_command)
+        self.assertEqual(data["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"], 600)
         self.assertEqual(
             data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
             fixed_command,

@@ -135,7 +135,7 @@ The script installs into `C:\Users\<employee>\.claude\`, writes `hooks\config.en
 | Windsurf / Cascade | `--agent windsurf` | `~/.codeium/windsurf/hooks.json` | pre-hooks (exit 2); OS dialog override for tool pre-hooks |
 | Devin Local | `--agent devin` | `~/.config/devin/config.json` (`%APPDATA%\devin\` on Windows) | `PreToolUse` OS dialog + `decision` approve/block; `UserPromptSubmit` exit 2 |
 | Cursor | `--agent cursor` | `~/.cursor/hooks.json` | JSON deny for prompts; OS dialog override for tool/shell/MCP/read/subagent blocks |
-| Claude Code | `--agent claude` | `~/.claude/settings.json` | CLI: `PreToolUse` native ask; VS Code/Desktop: OS dialog; `UserPromptSubmit` exit 2; `PostToolUse`/`Read` audit |
+| Claude Code | `--agent claude` | `~/.claude/settings.json` | CLI: `PreToolUse` native ask; VS Code/Desktop: OS dialog; `UserPromptSubmit` exit 2; `PostToolUse`/`Read` audit; hook `timeout` 600s |
 | GitHub Copilot | `--agent github-copilot` | `~/.copilot/hooks/fireraven-fireguard.json` or `.github/hooks/fireraven-fireguard.json` | CLI: OS dialog then allow/deny on `preToolUse`; cloud: hard deny |
 | Microsoft Copilot Studio | `--agent copilot` | Studio connector topics | Flow conditions |
 
@@ -143,7 +143,7 @@ The script installs into `C:\Users\<employee>\.claude\`, writes `hooks\config.en
 
 | Agent | Override UX |
 |-------|-------------|
-| Claude Code | Terminal CLI: native `permissionDecision: "ask"` with policy reason. VS Code plugin and Claude Code Desktop (`CLAUDE_CODE_ENTRYPOINT=claude-vscode` / `claude-desktop`): OS dialog, then allow or `permissionDecision: deny` |
+| Claude Code | Terminal CLI: native `permissionDecision: "ask"` with policy reason. VS Code plugin and Claude Code Desktop (`CLAUDE_CODE_ENTRYPOINT=claude-vscode` / `claude-desktop`): OS dialog, then allow or `permissionDecision: deny`. Popup close / Esc / dialog timeout = deny. Hook registration uses a 600s timeout where supported |
 | Cursor | OS dialog (yad → zenity → kdialog on Linux; osascript; MessageBox). Native `permission: "ask"` is **not** used — only `deny` is reliably enforced today |
 | Windsurf / Cascade | OS dialog, then exit `0` (allow) or exit `2` (deny). No native ask API |
 | Devin Local | OS dialog, then `{"decision":"approve"}` or `{"decision":"block","reason":"..."}` |
@@ -179,7 +179,7 @@ Devin Local is the local agent in Devin Desktop (Cascade’s successor), not clo
 
 **Output (audit only):** `PostToolUse` (matcher for `read` / `notebook_read`)
 
-**Human override:** Overridable `PreToolUse` policy blocks use the OS dialog, then `decision: approve` or `decision: block` with reason. `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks are not overridable.
+**Human override:** Overridable `PreToolUse` policy blocks use the OS dialog, then `decision: approve` or `decision: block` with reason. Closing the popup without Allow keeps the block. Hooks are registered with a **600s** `timeout`. `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks are not overridable.
 
 ### Cursor
 
@@ -189,7 +189,7 @@ Devin Local is the local agent in Devin Desktop (Cascade’s successor), not clo
 
 Denies via JSON rather than exit codes. `beforeSubmitPrompt` uses `{"continue": false}`; other Cursor events use `{"permission": "deny"}`.
 
-**Human override:** On FireGuard policy/security violations for tool/shell/MCP/read/subagent gates, the hook shows a blocking OS confirmation dialog (yad/zenity/kdialog on Linux, osascript on macOS, MessageBox on Windows). Allow continues once for that action; Deny/timeout/no-display keeps the deny. Local sensitive-path blocks (`.env`, keys, etc.) and missing credentials are **not** overridable. Prompt blocks stay hard deny (edit the prompt). Cursor’s native `permission: "ask"` is not used — it is not reliably enforced today.
+**Human override:** On FireGuard policy/security violations for tool/shell/MCP/read/subagent gates, the hook shows a blocking OS confirmation dialog (yad/zenity/kdialog on Linux, osascript on macOS, MessageBox on Windows). Allow continues once for that action; Deny, window close, Esc, dialog timeout, or no-display keeps the deny. Local sensitive-path blocks (`.env`, keys, etc.) and missing credentials are **not** overridable. Prompt blocks stay hard deny (edit the prompt). Cursor’s native `permission: "ask"` is not used — it is not reliably enforced today. Fireraven registers a **600s** hook `timeout` (and `failClosed` on key Cursor events) so the host does not kill the dialog early.
 
 Cursor coverage is self-contained in `cursor_guardrail.py` / `~/.cursor/hooks.json`. If Cursor also loads Claude Code third-party hooks, Fireraven’s Claude adapter no-ops under Cursor so enforcement stays on these native Cursor hooks only.
 
@@ -201,7 +201,7 @@ Cursor coverage is self-contained in `cursor_guardrail.py` / `~/.cursor/hooks.js
 
 **Output (audit only):** `PostToolUse` (matcher `Read`) — screens read body after the tool ran; cannot undo; warns via `systemMessage` / `additionalContext`
 
-**Human override:** On FireGuard policy/security violations for `PreToolUse`, behavior depends on host (`CLAUDE_CODE_ENTRYPOINT`): terminal CLI returns native `permissionDecision: "ask"` with the policy reason in the terminal; VS Code plugin and Claude Code Desktop show an OS Allow/Deny dialog, then allow once or return `permissionDecision: "deny"`. `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks and missing credentials are not overridable.
+**Human override:** On FireGuard policy/security violations for `PreToolUse`, behavior depends on host (`CLAUDE_CODE_ENTRYPOINT`): terminal CLI returns native `permissionDecision: "ask"` with the policy reason in the terminal; VS Code plugin and Claude Code Desktop show an OS Allow/Deny dialog, then allow once or return `permissionDecision: "deny"`. Closing the popup, Esc, or dialog timeout keeps the deny. Hook commands are registered with a **600s** `timeout`. `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks and missing credentials are not overridable.
 
 `FileChanged` and `SubagentStart` are not registered as guardrail gates (`SubagentStart` cannot block; Agent prompts are already covered by `PreToolUse`).
 
