@@ -526,7 +526,7 @@ class CursorAdapterOverrideTests(unittest.TestCase):
 
 
 class ClaudeAdapterOverrideTests(unittest.TestCase):
-    def test_pretool_policy_deny_returns_deny_json(self) -> None:
+    def test_vscode_pretool_policy_deny_returns_deny_json(self) -> None:
         from adapters import claude as claude_adapter
         from core.guardrail import GuardrailError
         from core.human_override import OverrideDecision
@@ -537,26 +537,31 @@ class ClaudeAdapterOverrideTests(unittest.TestCase):
             "tool_name": "Bash",
             "tool_input": {"command": "evil"},
         }
-        with mock.patch.object(claude_adapter, "read_hook_input", return_value=payload):
-            with mock.patch.object(claude_adapter, "load_config", return_value={}):
-                with mock.patch.object(
-                    claude_adapter,
-                    "resolve_settings",
-                    return_value={"fail_closed": False},
-                ):
+        with mock.patch.dict(
+            "os.environ",
+            {"CLAUDE_CODE_ENTRYPOINT": "claude-vscode"},
+            clear=False,
+        ):
+            with mock.patch.object(claude_adapter, "read_hook_input", return_value=payload):
+                with mock.patch.object(claude_adapter, "load_config", return_value={}):
                     with mock.patch.object(
                         claude_adapter,
-                        "run_input_check",
-                        side_effect=GuardrailError("blocked by policy"),
+                        "resolve_settings",
+                        return_value={"fail_closed": False},
                     ):
                         with mock.patch.object(
                             claude_adapter,
-                            "resolve_override",
-                            return_value=OverrideDecision.DENY,
-                        ) as override:
-                            with mock.patch("builtins.print") as printer:
-                                with self.assertRaises(SystemExit) as cm:
-                                    claude_adapter.main()
+                            "run_input_check",
+                            side_effect=GuardrailError("blocked by policy"),
+                        ):
+                            with mock.patch.object(
+                                claude_adapter,
+                                "resolve_override",
+                                return_value=OverrideDecision.DENY,
+                            ) as override:
+                                with mock.patch("builtins.print") as printer:
+                                    with self.assertRaises(SystemExit) as cm:
+                                        claude_adapter.main()
         self.assertEqual(cm.exception.code, 0)
         override.assert_called_once()
         printed = None
@@ -576,7 +581,7 @@ class ClaudeAdapterOverrideTests(unittest.TestCase):
             "blocked by policy",
         )
 
-    def test_pretool_policy_allow_exits_0_without_deny_json(self) -> None:
+    def test_vscode_pretool_policy_allow_exits_0_without_deny_json(self) -> None:
         from adapters import claude as claude_adapter
         from core.guardrail import GuardrailError
         from core.human_override import OverrideDecision
@@ -587,26 +592,31 @@ class ClaudeAdapterOverrideTests(unittest.TestCase):
             "tool_name": "Bash",
             "tool_input": {"command": "evil"},
         }
-        with mock.patch.object(claude_adapter, "read_hook_input", return_value=payload):
-            with mock.patch.object(claude_adapter, "load_config", return_value={}):
-                with mock.patch.object(
-                    claude_adapter,
-                    "resolve_settings",
-                    return_value={"fail_closed": False},
-                ):
+        with mock.patch.dict(
+            "os.environ",
+            {"CLAUDE_CODE_ENTRYPOINT": "claude-vscode"},
+            clear=False,
+        ):
+            with mock.patch.object(claude_adapter, "read_hook_input", return_value=payload):
+                with mock.patch.object(claude_adapter, "load_config", return_value={}):
                     with mock.patch.object(
                         claude_adapter,
-                        "run_input_check",
-                        side_effect=GuardrailError("blocked by policy"),
+                        "resolve_settings",
+                        return_value={"fail_closed": False},
                     ):
                         with mock.patch.object(
                             claude_adapter,
-                            "resolve_override",
-                            return_value=OverrideDecision.ALLOW,
-                        ) as override:
-                            with mock.patch("builtins.print") as printer:
-                                with self.assertRaises(SystemExit) as cm:
-                                    claude_adapter.main()
+                            "run_input_check",
+                            side_effect=GuardrailError("blocked by policy"),
+                        ):
+                            with mock.patch.object(
+                                claude_adapter,
+                                "resolve_override",
+                                return_value=OverrideDecision.ALLOW,
+                            ) as override:
+                                with mock.patch("builtins.print") as printer:
+                                    with self.assertRaises(SystemExit) as cm:
+                                        claude_adapter.main()
         self.assertEqual(cm.exception.code, 0)
         override.assert_called_once()
         for call in printer.call_args_list:
@@ -617,6 +627,96 @@ class ClaudeAdapterOverrideTests(unittest.TestCase):
                     printed.get("hookSpecificOutput", {}).get("permissionDecision"),
                     "deny",
                 )
+
+    def test_desktop_pretool_uses_os_dialog(self) -> None:
+        from adapters import claude as claude_adapter
+        from core.guardrail import GuardrailError
+        from core.human_override import OverrideDecision
+
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "session_id": "s1",
+            "tool_name": "Bash",
+            "tool_input": {"command": "evil"},
+        }
+        with mock.patch.dict(
+            "os.environ",
+            {"CLAUDE_CODE_ENTRYPOINT": "claude-desktop"},
+            clear=False,
+        ):
+            with mock.patch.object(claude_adapter, "read_hook_input", return_value=payload):
+                with mock.patch.object(claude_adapter, "load_config", return_value={}):
+                    with mock.patch.object(
+                        claude_adapter,
+                        "resolve_settings",
+                        return_value={"fail_closed": False},
+                    ):
+                        with mock.patch.object(
+                            claude_adapter,
+                            "run_input_check",
+                            side_effect=GuardrailError("blocked by policy"),
+                        ):
+                            with mock.patch.object(
+                                claude_adapter,
+                                "resolve_override",
+                                return_value=OverrideDecision.DENY,
+                            ) as override:
+                                with mock.patch("builtins.print"):
+                                    with self.assertRaises(SystemExit) as cm:
+                                        claude_adapter.main()
+        self.assertEqual(cm.exception.code, 0)
+        override.assert_called_once()
+
+    def test_cli_pretool_policy_returns_ask_json(self) -> None:
+        from adapters import claude as claude_adapter
+        from core.guardrail import GuardrailError
+
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "session_id": "s1",
+            "tool_name": "Bash",
+            "tool_input": {"command": "evil"},
+        }
+        env = {k: v for k, v in __import__("os").environ.items() if k != "CLAUDE_CODE_ENTRYPOINT"}
+        env["CLAUDE_CODE_ENTRYPOINT"] = "cli"
+        with mock.patch.dict("os.environ", env, clear=True):
+            with mock.patch.object(claude_adapter, "read_hook_input", return_value=payload):
+                with mock.patch.object(claude_adapter, "load_config", return_value={}):
+                    with mock.patch.object(
+                        claude_adapter,
+                        "resolve_settings",
+                        return_value={"fail_closed": False},
+                    ):
+                        with mock.patch.object(
+                            claude_adapter,
+                            "run_input_check",
+                            side_effect=GuardrailError("blocked by policy"),
+                        ):
+                            with mock.patch.object(
+                                claude_adapter,
+                                "resolve_override",
+                            ) as override:
+                                with mock.patch("builtins.print") as printer:
+                                    with self.assertRaises(SystemExit) as cm:
+                                        claude_adapter.main()
+        self.assertEqual(cm.exception.code, 0)
+        override.assert_not_called()
+        printed = None
+        for call in printer.call_args_list:
+            args = call.args
+            if args and isinstance(args[0], str) and args[0].startswith("{"):
+                printed = json.loads(args[0])
+                break
+        self.assertIsNotNone(printed)
+        assert printed is not None
+        self.assertEqual(
+            printed["hookSpecificOutput"]["permissionDecision"],
+            "ask",
+        )
+        self.assertEqual(
+            printed["hookSpecificOutput"]["permissionDecisionReason"],
+            "blocked by policy",
+        )
 
     def test_cursor_bridged_invocation_is_skipped(self) -> None:
         from adapters import claude as claude_adapter

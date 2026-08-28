@@ -135,7 +135,7 @@ The script installs into `C:\Users\<employee>\.claude\`, writes `hooks\config.en
 | Windsurf / Cascade | `--agent windsurf` | `~/.codeium/windsurf/hooks.json` | pre-hooks (exit 2); OS dialog override for tool pre-hooks |
 | Devin Local | `--agent devin` | `~/.config/devin/config.json` (`%APPDATA%\devin\` on Windows) | `PreToolUse` OS dialog + `decision` approve/block; `UserPromptSubmit` exit 2 |
 | Cursor | `--agent cursor` | `~/.cursor/hooks.json` | JSON deny for prompts; OS dialog override for tool/shell/MCP/read/subagent blocks |
-| Claude Code | `--agent claude` | `~/.claude/settings.json` | `PreToolUse` OS dialog override + `UserPromptSubmit` exit 2; `PostToolUse`/`Read` audit |
+| Claude Code | `--agent claude` | `~/.claude/settings.json` | CLI: `PreToolUse` native ask; VS Code/Desktop: OS dialog; `UserPromptSubmit` exit 2; `PostToolUse`/`Read` audit |
 | GitHub Copilot | `--agent github-copilot` | `~/.copilot/hooks/fireraven-fireguard.json` or `.github/hooks/fireraven-fireguard.json` | CLI: OS dialog then allow/deny on `preToolUse`; cloud: hard deny |
 | Microsoft Copilot Studio | `--agent copilot` | Studio connector topics | Flow conditions |
 
@@ -143,7 +143,7 @@ The script installs into `C:\Users\<employee>\.claude\`, writes `hooks\config.en
 
 | Agent | Override UX |
 |-------|-------------|
-| Claude Code | OS dialog on overridable `PreToolUse`, then allow or `permissionDecision: deny` with policy reason. Native `ask` is unreliable in the VS Code extension |
+| Claude Code | Terminal CLI: native `permissionDecision: "ask"` with policy reason. VS Code plugin and Claude Code Desktop (`CLAUDE_CODE_ENTRYPOINT=claude-vscode` / `claude-desktop`): OS dialog, then allow or `permissionDecision: deny` |
 | Cursor | OS dialog (yad → zenity → kdialog on Linux; osascript; MessageBox). Native `permission: "ask"` is **not** used — only `deny` is reliably enforced today |
 | Windsurf / Cascade | OS dialog, then exit `0` (allow) or exit `2` (deny). No native ask API |
 | Devin Local | OS dialog, then `{"decision":"approve"}` or `{"decision":"block","reason":"..."}` |
@@ -201,7 +201,7 @@ Cursor coverage is self-contained in `cursor_guardrail.py` / `~/.cursor/hooks.js
 
 **Output (audit only):** `PostToolUse` (matcher `Read`) — screens read body after the tool ran; cannot undo; warns via `systemMessage` / `additionalContext`
 
-**Human override:** On FireGuard policy/security violations for `PreToolUse`, the hook shows an OS Allow/Deny dialog (same as Cursor/Copilot). Allow continues once; Deny/unavailable returns `permissionDecision: "deny"` with the policy reason (native `ask` is unreliable in the VS Code Claude extension). `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks and missing credentials are not overridable.
+**Human override:** On FireGuard policy/security violations for `PreToolUse`, behavior depends on host (`CLAUDE_CODE_ENTRYPOINT`): terminal CLI returns native `permissionDecision: "ask"` with the policy reason in the terminal; VS Code plugin and Claude Code Desktop show an OS Allow/Deny dialog, then allow once or return `permissionDecision: "deny"`. `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks and missing credentials are not overridable.
 
 `FileChanged` and `SubagentStart` are not registered as guardrail gates (`SubagentStart` cannot block; Agent prompts are already covered by `PreToolUse`).
 

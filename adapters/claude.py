@@ -7,9 +7,12 @@ import sys
 from core.config import load_config, resolve_settings
 from core.guardrail import GuardrailError, run_input_check
 from core.hook_io import read_hook_input
-from core.human_override import OverrideDecision, resolve_override
+from core.human_override import OverrideDecision, log_override_audit, resolve_override
 from core.serializers import infer_claude_event, serialize_claude
 from core.unavailable_notice import UNAVAILABLE_MESSAGE, emit_unavailable_notice
+
+# GUI hosts where native permissionDecision:ask is unreliable or has no TTY prompt.
+_OS_DIALOG_ENTRYPOINTS = frozenset({"claude-vscode", "claude-desktop"})
 
 
 def invoked_from_cursor(payload: dict) -> bool:
@@ -24,6 +27,27 @@ def invoked_from_cursor(payload: dict) -> bool:
     if (payload.get("cursorVersion") or "").strip():
         return True
     return bool(os.environ.get("CURSOR_VERSION", "").strip())
+
+
+def _use_os_dialog_override() -> bool:
+    """True for VS Code plugin and Claude Code Desktop; false for terminal CLI."""
+    entry = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").strip().lower()
+    return entry in _OS_DIALOG_ENTRYPOINTS
+
+
+def _ask_pretool(message: str) -> None:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason": message,
+                }
+            }
+        )
+    )
+    sys.exit(0)
 
 
 def _deny_pretool(message: str) -> None:
@@ -122,17 +146,25 @@ def main() -> None:
     except GuardrailError as exc:
         message = str(exc)
         if hook_event == "PreToolUse" and exc.overridable:
-            decision = resolve_override(
-                title="Fireraven FireGuard",
-                message=message,
+            if _use_os_dialog_override():
+                decision = resolve_override(
+                    title="Fireraven FireGuard",
+                    message=message,
+                    session_id=session_id,
+                    event=hook_event,
+                    overridable=True,
+                    event_allows_override=True,
+                )
+                if decision == OverrideDecision.ALLOW:
+                    sys.exit(0)
+                _deny_pretool(message)
+            log_override_audit(
                 session_id=session_id,
                 event=hook_event,
-                overridable=True,
-                event_allows_override=True,
+                decision="ask",
+                message=message,
             )
-            if decision == OverrideDecision.ALLOW:
-                sys.exit(0)
-            _deny_pretool(message)
+            _ask_pretool(message)
         _deny_exit(message)
     except Exception as exc:
         if settings["fail_closed"]:
