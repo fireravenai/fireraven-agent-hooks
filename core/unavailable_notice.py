@@ -9,10 +9,23 @@ import sys
 from core.session_store import load, update
 
 UNAVAILABLE_MESSAGE = "FireGuard unavailable"
+NOT_CONFIGURED_MESSAGE = "FireGuard not configured"
+NO_CREDITS_MESSAGE = "FireGuard: no credits left"
+
+NOTICE_MESSAGES: dict[str, str] = {
+    "unavailable": UNAVAILABLE_MESSAGE,
+    "not_configured": NOT_CONFIGURED_MESSAGE,
+    "no_credits": NO_CREDITS_MESSAGE,
+}
+
 _STATE_KEY = "fg_unavailable_noticed"
 
 
-def consume_unavailable_notice(session_id: str) -> str | None:
+def notice_message(reason: str) -> str:
+    return NOTICE_MESSAGES.get(reason, UNAVAILABLE_MESSAGE)
+
+
+def consume_unavailable_notice(session_id: str, reason: str = "unavailable") -> str | None:
     """Return the notice message once per session; None on later calls."""
     if not session_id:
         session_id = "unknown-session"
@@ -20,7 +33,7 @@ def consume_unavailable_notice(session_id: str) -> str | None:
     if state.get(_STATE_KEY):
         return None
     update(session_id, **{_STATE_KEY: True})
-    return UNAVAILABLE_MESSAGE
+    return notice_message(reason)
 
 
 def show_unavailable_toast(message: str) -> None:
@@ -37,9 +50,9 @@ def show_unavailable_toast(message: str) -> None:
         return
 
 
-def emit_unavailable_notice(session_id: str) -> str | None:
+def emit_unavailable_notice(session_id: str, reason: str = "unavailable") -> str | None:
     """Log + toast once per session. Returns the message when emitted, else None."""
-    message = consume_unavailable_notice(session_id)
+    message = consume_unavailable_notice(session_id, reason=reason)
     if message is None:
         return None
     print(
@@ -47,6 +60,7 @@ def emit_unavailable_notice(session_id: str) -> str | None:
             {
                 "session_id": session_id,
                 "event": "fireguard_unavailable",
+                "reason": reason,
                 "message": message,
             }
         ),

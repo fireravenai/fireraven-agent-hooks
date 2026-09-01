@@ -3,8 +3,15 @@ from __future__ import annotations
 import json
 import sys
 
-from core.config import load_config, resolve_settings
-from core.guardrail import GuardrailError, handle_failure, run_input_check, run_output_audit
+from core.config import fail_closed_from_config, load_config, resolve_settings
+from core.guardrail import (
+    FireguardUnavailableError,
+    GuardrailError,
+    handle_failure,
+    handle_service_failure,
+    run_input_check,
+    run_output_audit,
+)
 from core.hook_io import read_hook_input
 from core.human_override import OverrideDecision, resolve_override
 from core.serializers import WINDSURF_INPUT_EVENTS, WINDSURF_OUTPUT_AUDIT_EVENTS, serialize_windsurf
@@ -33,8 +40,15 @@ def main() -> None:
     try:
         settings = resolve_settings(config)
     except ValueError as exc:
-        print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
-        sys.exit(2)
+        if fail_closed_from_config(config):
+            print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
+            sys.exit(2)
+        handle_service_failure(
+            FireguardUnavailableError(str(exc), reason="not_configured"),
+            fail_closed=False,
+            session_id=session_id or "windsurf-session",
+        )
+        sys.exit(0)
 
     if action in WINDSURF_OUTPUT_AUDIT_EVENTS:
         text = serialize_windsurf(action, tool_info)
@@ -59,6 +73,9 @@ def main() -> None:
 
     try:
         run_input_check(session_id, text, label="Windsurf Cascade")
+    except FireguardUnavailableError as exc:
+        handle_service_failure(exc, fail_closed=settings["fail_closed"], session_id=session_id)
+        return
     except GuardrailError as exc:
         message = str(exc)
         decision = resolve_override(

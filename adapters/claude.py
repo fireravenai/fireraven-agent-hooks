@@ -4,12 +4,18 @@ import json
 import os
 import sys
 
-from core.config import load_config, resolve_settings
-from core.guardrail import GuardrailError, run_input_check
+from core.config import fail_closed_from_config, load_config, resolve_settings
+from core.guardrail import (
+    FireguardUnavailableError,
+    GuardrailError,
+    handle_service_failure,
+    resolve_service_failure,
+    run_input_check,
+)
 from core.hook_io import read_hook_input
 from core.human_override import OverrideDecision, log_override_audit, resolve_override
 from core.serializers import infer_claude_event, serialize_claude
-from core.unavailable_notice import UNAVAILABLE_MESSAGE, emit_unavailable_notice
+from core.unavailable_notice import emit_unavailable_notice
 
 # GUI hosts where native permissionDecision:ask is unreliable or has no TTY prompt.
 _OS_DIALOG_ENTRYPOINTS = frozenset({"claude-vscode", "claude-desktop"})
@@ -112,8 +118,11 @@ def main() -> None:
     try:
         settings = resolve_settings(config)
     except ValueError as exc:
-        print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
-        sys.exit(2)
+        if fail_closed_from_config(config):
+            print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
+            sys.exit(2)
+        emit_unavailable_notice(session_id, reason="not_configured")
+        sys.exit(0)
 
     if hook_event == "PostToolUse":
         try:
@@ -131,18 +140,31 @@ def main() -> None:
                 file=sys.stderr,
             )
             _post_tool_warn(str(exc))
+        except FireguardUnavailableError as exc:
+            if settings["fail_closed"]:
+                print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
+                _post_tool_warn(str(exc))
+            else:
+                notice = emit_unavailable_notice(session_id, reason=exc.reason)
+                if notice:
+                    _post_tool_warn(notice)
         except Exception as exc:
             if settings["fail_closed"]:
                 print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
                 _post_tool_warn(f"Fireraven guardrail hook: {exc}")
             else:
-                notice = emit_unavailable_notice(session_id)
+                notice = emit_unavailable_notice(
+                    session_id,
+                    reason=resolve_service_failure(exc),
+                )
                 if notice:
-                    _post_tool_warn(UNAVAILABLE_MESSAGE)
+                    _post_tool_warn(notice)
         sys.exit(0)
 
     try:
         run_input_check(session_id, text, label="Claude Code")
+    except FireguardUnavailableError as exc:
+        handle_service_failure(exc, fail_closed=settings["fail_closed"], session_id=session_id)
     except GuardrailError as exc:
         message = str(exc)
         if hook_event == "PreToolUse" and exc.overridable:
@@ -167,11 +189,7 @@ def main() -> None:
             _ask_pretool(message)
         _deny_exit(message)
     except Exception as exc:
-        if settings["fail_closed"]:
-            print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
-            sys.exit(2)
-        emit_unavailable_notice(session_id)
-        sys.exit(0)
+        handle_service_failure(exc, fail_closed=settings["fail_closed"], session_id=session_id)
 
     sys.exit(0)
 

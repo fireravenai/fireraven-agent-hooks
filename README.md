@@ -167,7 +167,7 @@ The script installs into `C:\Users\<employee>\.claude\`, writes `hooks\config.en
 
 **Output (audit only):** `post_cascade_response`, `post_write_code`
 
-**Human override:** On FireGuard policy/security violations for tool pre-hooks (`pre_run_command`, `pre_mcp_tool_use`, `pre_write_code`, `pre_read_code`), the hook shows an OS Allow/Deny dialog. Allow → exit 0; Deny/unavailable → stderr + exit 2. `pre_user_prompt` stays hard deny. Local sensitive-path blocks and missing credentials are not overridable. Hook entries use `show_output: true` so deny reasons appear in Cascade UI.
+**Human override:** On FireGuard policy/security violations for tool pre-hooks (`pre_run_command`, `pre_mcp_tool_use`, `pre_write_code`, `pre_read_code`), the hook shows an OS Allow/Deny dialog. Allow → exit 0; Deny/unavailable → stderr + exit 2. `pre_user_prompt` stays hard deny. Local sensitive-path blocks are not overridable. Hook entries use `show_output: true` so deny reasons appear in Cascade UI.
 
 ### Devin Local
 
@@ -189,7 +189,7 @@ Devin Local is the local agent in Devin Desktop (Cascade’s successor), not clo
 
 Denies via JSON rather than exit codes. `beforeSubmitPrompt` uses `{"continue": false}`; other Cursor events use `{"permission": "deny"}`.
 
-**Human override:** On FireGuard policy/security violations for tool/shell/MCP/read/subagent gates, the hook shows a blocking OS confirmation dialog (yad/zenity/kdialog on Linux, osascript on macOS, MessageBox on Windows). Allow continues once for that action; Deny, window close, Esc, dialog timeout, or no-display keeps the deny. Local sensitive-path blocks (`.env`, keys, etc.) and missing credentials are **not** overridable. Prompt blocks stay hard deny (edit the prompt). Cursor’s native `permission: "ask"` is not used — it is not reliably enforced today. Fireraven registers a **600s** hook `timeout` (and `failClosed` on key Cursor events) so the host does not kill the dialog early.
+**Human override:** On FireGuard policy/security violations for tool/shell/MCP/read/subagent gates, the hook shows a blocking OS confirmation dialog (yad/zenity/kdialog on Linux, osascript on macOS, MessageBox on Windows). Allow continues once for that action; Deny, window close, Esc, dialog timeout, or no-display keeps the deny. Local sensitive-path blocks (`.env`, keys, etc.) are **not** overridable. Prompt blocks stay hard deny (edit the prompt). Cursor’s native `permission: "ask"` is not used — it is not reliably enforced today. Fireraven registers a **600s** hook `timeout` (and `failClosed` on key Cursor events) so the host does not kill the dialog early.
 
 Cursor coverage is self-contained in `cursor_guardrail.py` / `~/.cursor/hooks.json`. If Cursor also loads Claude Code third-party hooks, Fireraven’s Claude adapter no-ops under Cursor so enforcement stays on these native Cursor hooks only.
 
@@ -201,7 +201,7 @@ Cursor coverage is self-contained in `cursor_guardrail.py` / `~/.cursor/hooks.js
 
 **Output (audit only):** `PostToolUse` (matcher `Read`) — screens read body after the tool ran; cannot undo; warns via `systemMessage` / `additionalContext`
 
-**Human override:** On FireGuard policy/security violations for `PreToolUse`, behavior depends on host (`CLAUDE_CODE_ENTRYPOINT`): terminal CLI returns native `permissionDecision: "ask"` with the policy reason in the terminal; VS Code plugin and Claude Code Desktop show an OS Allow/Deny dialog, then allow once or return `permissionDecision: "deny"`. Closing the popup, Esc, or dialog timeout keeps the deny. Hook commands are registered with a **600s** `timeout`. `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks and missing credentials are not overridable.
+**Human override:** On FireGuard policy/security violations for `PreToolUse`, behavior depends on host (`CLAUDE_CODE_ENTRYPOINT`): terminal CLI returns native `permissionDecision: "ask"` with the policy reason in the terminal; VS Code plugin and Claude Code Desktop show an OS Allow/Deny dialog, then allow once or return `permissionDecision: "deny"`. Closing the popup, Esc, or dialog timeout keeps the deny. Hook commands are registered with a **600s** `timeout`. `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks are not overridable.
 
 `FileChanged` and `SubagentStart` are not registered as guardrail gates (`SubagentStart` cannot block; Agent prompts are already covered by `PreToolUse`).
 
@@ -381,8 +381,8 @@ This value is sent as `execution_mode` on each input and output guardrail API ca
 
 | Value | When to use |
 |-------|-------------|
-| `closed` | Block the agent action when the hook cannot reach FireGuard (network error, timeout, HTTP error). Use for strict production / paid enforcement. |
-| `open` | **Default.** Allow the agent action through on transient FireGuard API failures. Shows a once-per-session short notice (`FireGuard unavailable`) via OS toast and, on Cursor, `user_message` on the allow response (stderr also logs for Output → Hooks). Traffic is **not** monitored until FireGuard recovers. Policy violations and missing `FIRERAVEN_*` credentials still block. |
+| `closed` | Block the agent action when FireGuard cannot run (missing config, no credits, network error, timeout, HTTP error). Use for strict production / paid enforcement. |
+| `open` | **Default.** Allow the agent action through when FireGuard cannot run. Shows a once-per-session short notice via OS toast and, on Cursor, `user_message` on the allow response (stderr also logs for Output → Hooks). Notice text depends on the failure: `FireGuard unavailable`, `FireGuard not configured`, or `FireGuard: no credits left`. Traffic is **not** monitored until FireGuard recovers. Policy violations and local sensitive-path blocks still deny. |
 
 Restart your IDE(s) after editing `config.env`.
 

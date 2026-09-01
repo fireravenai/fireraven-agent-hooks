@@ -3,8 +3,13 @@ from __future__ import annotations
 import json
 import sys
 
-from core.config import load_config, resolve_settings
-from core.guardrail import GuardrailError, run_input_check
+from core.config import fail_closed_from_config, load_config, resolve_settings
+from core.guardrail import (
+    FireguardUnavailableError,
+    GuardrailError,
+    resolve_service_failure,
+    run_input_check,
+)
 from core.hook_io import read_hook_input
 from core.human_override import OverrideDecision, resolve_override
 from core.serializers import CURSOR_AUDIT_EVENTS, CURSOR_INPUT_EVENTS, serialize_cursor
@@ -98,6 +103,20 @@ def infer_cursor_event(payload: dict) -> str:
     return ""
 
 
+def _handle_service_failure(
+    hook_event: str,
+    session_id: str,
+    exc: Exception,
+    *,
+    fail_closed: bool,
+) -> None:
+    if fail_closed:
+        detail = str(exc) or resolve_service_failure(exc)
+        _deny(hook_event, f"Fireraven guardrail hook: {detail}")
+    notice = emit_unavailable_notice(session_id, reason=resolve_service_failure(exc))
+    _allow(hook_event, user_message=notice)
+
+
 def _handle_policy_block(hook_event: str, session_id: str, exc: GuardrailError) -> None:
     message = str(exc)
     decision = resolve_override(
@@ -147,7 +166,8 @@ def main() -> None:
     except ValueError as exc:
         if settings_fail_closed(config):
             _deny(hook_event, f"Fireraven guardrail hook: {exc}")
-        _allow(hook_event)
+        notice = emit_unavailable_notice(session_id, reason="not_configured")
+        _allow(hook_event, user_message=notice)
 
     if hook_event in CURSOR_AUDIT_EVENTS:
         notice: str | None = None
@@ -161,6 +181,20 @@ def main() -> None:
                 "message": str(exc),
             }
             print(json.dumps(audit_log), file=sys.stderr)
+        except FireguardUnavailableError as exc:
+            if fail_closed:
+                print(
+                    json.dumps(
+                        {
+                            "session_id": session_id,
+                            "event": hook_event,
+                            "error": str(exc),
+                        }
+                    ),
+                    file=sys.stderr,
+                )
+            else:
+                notice = emit_unavailable_notice(session_id, reason=exc.reason)
         except Exception as exc:
             if fail_closed:
                 print(
@@ -174,27 +208,26 @@ def main() -> None:
                     file=sys.stderr,
                 )
             else:
-                notice = emit_unavailable_notice(session_id)
+                notice = emit_unavailable_notice(
+                    session_id,
+                    reason=resolve_service_failure(exc),
+                )
         _allow(hook_event, user_message=notice)
 
     try:
         run_input_check(session_id, text, label="Cursor")
+    except FireguardUnavailableError as exc:
+        _handle_service_failure(hook_event, session_id, exc, fail_closed=fail_closed)
     except GuardrailError as exc:
         _handle_policy_block(hook_event, session_id, exc)
     except Exception as exc:
-        if fail_closed:
-            _deny(hook_event, f"Fireraven guardrail hook: {exc}")
-        notice = emit_unavailable_notice(session_id)
-        _allow(hook_event, user_message=notice)
+        _handle_service_failure(hook_event, session_id, exc, fail_closed=fail_closed)
 
     _allow(hook_event)
 
 
 def settings_fail_closed(config: dict) -> bool:
-    try:
-        return resolve_settings(config)["fail_closed"]
-    except ValueError:
-        return True
+    return fail_closed_from_config(config)
 
 
 if __name__ == "__main__":

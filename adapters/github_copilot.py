@@ -3,8 +3,14 @@ from __future__ import annotations
 import json
 import sys
 
-from core.config import load_config, resolve_settings
-from core.guardrail import GuardrailError, run_input_check, run_output_audit
+from core.config import fail_closed_from_config, load_config, resolve_settings
+from core.guardrail import (
+    FireguardUnavailableError,
+    GuardrailError,
+    resolve_service_failure,
+    run_input_check,
+    run_output_audit,
+)
 from core.hook_io import read_hook_input
 from core.human_override import OverrideDecision, resolve_override
 from core.serializers import (
@@ -91,12 +97,22 @@ def main() -> None:
         settings = resolve_settings(config)
         fail_closed = settings["fail_closed"]
     except ValueError as exc:
-        if hook_event == "preToolUse":
-            _deny(f"Fireraven guardrail hook: {exc}")
+        if fail_closed_from_config(config):
+            if hook_event == "preToolUse":
+                _deny(f"Fireraven guardrail hook: {exc}")
+            _fail_closed(f"Fireraven guardrail hook: {exc}")
+        emit_unavailable_notice(session_id, reason="not_configured")
         _allow()
 
     try:
         run_input_check(session_id, text, label="GitHub Copilot")
+    except FireguardUnavailableError as exc:
+        if fail_closed:
+            if hook_event == "preToolUse":
+                _deny(str(exc))
+            _fail_closed(str(exc))
+        emit_unavailable_notice(session_id, reason=exc.reason)
+        _allow()
     except GuardrailError as exc:
         if hook_event == "preToolUse":
             decision = resolve_override(
@@ -117,7 +133,7 @@ def main() -> None:
             if hook_event == "preToolUse":
                 _deny(f"Fireraven guardrail hook: {exc}")
             _fail_closed(f"Fireraven guardrail hook: {exc}")
-        emit_unavailable_notice(session_id)
+        emit_unavailable_notice(session_id, reason=resolve_service_failure(exc))
         _allow()
 
     _allow()

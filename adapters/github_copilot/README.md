@@ -85,7 +85,7 @@ FIRERAVEN_PROJECT_ID=your_project_id
 | **Copilot cloud agent** | No GUI — dialog is unavailable → hard deny with reason. |
 | Native `permissionDecision: "ask"` | **Not used** — unreliable / often only `deny` is processed for shell hooks. |
 
-Local sensitive-path blocks and missing credentials are not overridable (no dialog).
+Local sensitive-path blocks are not overridable (no dialog).
 
 Deny response shape:
 

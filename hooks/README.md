@@ -67,8 +67,8 @@ FIRERAVEN_FAIL_MODE=open
 
 | Value | Default | Behavior |
 |-------|---------|----------|
-| `closed` | | Block the agent action when the hook cannot reach FireGuard (network, timeout, or HTTP error). |
-| `open` | yes | Allow the action through on transient FireGuard API failures. Policy violations and missing credentials still block. |
+| `closed` | | Block the agent action when FireGuard cannot run (missing config, no credits, network, timeout, or HTTP error). |
+| `open` | yes | Allow the action through when FireGuard cannot run. Shows a once-per-session notice (`FireGuard unavailable`, `FireGuard not configured`, or `FireGuard: no credits left`). Policy violations and local sensitive-path blocks still deny. |
 
 See [config.example.env](config.example.env) for inline comments.
 

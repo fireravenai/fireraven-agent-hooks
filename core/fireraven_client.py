@@ -100,6 +100,16 @@ def check_output_guardrail(
     return api_request("POST", url, api_key, body, timeout_sec)
 
 
+def classify_api_error(exc: Exception) -> str:
+    """Map transport/API failures to an unavailable-notice reason."""
+    message = str(exc).lower()
+    if "http 402" in message or "http 412" in message:
+        return "no_credits"
+    if "credits" in message or "no credits" in message:
+        return "no_credits"
+    return "unavailable"
+
+
 def violation_message(result: dict, default: str = "Blocked by Fireraven FireGuard.") -> str:
     """Build deny/dialog text: FG message(s), then a bulleted trigger list."""
     headers: list[str] = []

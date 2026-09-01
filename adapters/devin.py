@@ -3,8 +3,15 @@ from __future__ import annotations
 import json
 import sys
 
-from core.config import load_config, resolve_settings
-from core.guardrail import GuardrailError, run_input_check, run_output_audit
+from core.config import fail_closed_from_config, load_config, resolve_settings
+from core.guardrail import (
+    FireguardUnavailableError,
+    GuardrailError,
+    handle_service_failure,
+    resolve_service_failure,
+    run_input_check,
+    run_output_audit,
+)
 from core.hook_io import read_hook_input
 from core.human_override import OverrideDecision, resolve_override
 from core.serializers import infer_devin_event, serialize_devin
@@ -49,19 +56,27 @@ def main() -> None:
     try:
         settings = resolve_settings(config)
     except ValueError as exc:
-        if hook_event in ("PreToolUse", "UserPromptSubmit"):
-            _block(f"Fireraven guardrail hook: {exc}")
-        print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
-        sys.exit(2)
+        if fail_closed_from_config(config):
+            if hook_event in ("PreToolUse", "UserPromptSubmit"):
+                _block(f"Fireraven guardrail hook: {exc}")
+            print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
+            sys.exit(2)
+        emit_unavailable_notice(session_id, reason="not_configured")
+        sys.exit(0)
 
     if hook_event == "PostToolUse":
         try:
             run_output_audit(session_id, text)
+        except FireguardUnavailableError as exc:
+            if settings["fail_closed"]:
+                print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
+            else:
+                emit_unavailable_notice(session_id, reason=exc.reason)
         except Exception as exc:
             if settings["fail_closed"]:
                 print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
             else:
-                emit_unavailable_notice(session_id)
+                emit_unavailable_notice(session_id, reason=resolve_service_failure(exc))
         sys.exit(0)
 
     if hook_event not in ("PreToolUse", "UserPromptSubmit"):
@@ -69,6 +84,13 @@ def main() -> None:
 
     try:
         run_input_check(session_id, text, label="Devin Local")
+    except FireguardUnavailableError as exc:
+        if settings["fail_closed"]:
+            if hook_event == "PreToolUse":
+                _block(str(exc))
+            _deny_exit(str(exc))
+        emit_unavailable_notice(session_id, reason=exc.reason)
+        sys.exit(0)
     except GuardrailError as exc:
         message = str(exc)
         if hook_event == "PreToolUse":
@@ -89,7 +111,7 @@ def main() -> None:
             if hook_event == "PreToolUse":
                 _block(f"Fireraven guardrail hook: {exc}")
             _deny_exit(f"Fireraven guardrail hook: {exc}")
-        emit_unavailable_notice(session_id)
+        emit_unavailable_notice(session_id, reason=resolve_service_failure(exc))
         sys.exit(0)
 
     sys.exit(0)

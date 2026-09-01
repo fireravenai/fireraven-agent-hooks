@@ -8,6 +8,7 @@ from core.config import load_config, resolve_settings
 from core.fireraven_client import (
     check_input_guardrail,
     check_output_guardrail,
+    classify_api_error,
     ensure_conversation,
     violation_message,
 )
@@ -19,8 +20,7 @@ class GuardrailError(Exception):
     """Raised when an action must be blocked.
 
     ``overridable`` is True for FireGuard policy/security violations (human may
-    approve once). Local sensitive-path blocks and missing credentials are not
-    overridable.
+    approve once). Local sensitive-path blocks are not overridable.
     """
 
     def __init__(self, message: str, *, overridable: bool = True) -> None:
@@ -28,22 +28,52 @@ class GuardrailError(Exception):
         self.overridable = overridable
 
 
+class FireguardUnavailableError(Exception):
+    """Raised when FireGuard cannot run (config, credits, or service outage)."""
+
+    def __init__(self, message: str = "", *, reason: str = "unavailable") -> None:
+        super().__init__(message or reason)
+        self.reason = reason
+
+
+def resolve_service_failure(exc: Exception) -> str:
+    """Return notice reason for an infrastructure failure."""
+    if isinstance(exc, FireguardUnavailableError):
+        return exc.reason
+    return classify_api_error(exc)
+
+
+def handle_service_failure(
+    exc: Exception,
+    *,
+    fail_closed: bool,
+    session_id: str,
+) -> str | None:
+    """If fail-open: emit notice and return message. If fail-closed: exit 2."""
+    if fail_closed:
+        detail = str(exc) or resolve_service_failure(exc)
+        print(f"Fireraven guardrail hook: {detail}", file=sys.stderr)
+        sys.exit(2)
+    reason = resolve_service_failure(exc)
+    return emit_unavailable_notice(session_id or "unknown-session", reason=reason)
+
+
 def _settings() -> dict[str, Any]:
     config = load_config()
     try:
         settings = resolve_settings(config)
     except ValueError as exc:
-        raise GuardrailError(str(exc), overridable=False) from exc
+        raise FireguardUnavailableError(str(exc), reason="not_configured") from exc
 
     if not settings["api_key"]:
-        raise GuardrailError(
+        raise FireguardUnavailableError(
             "FIRERAVEN_GUARDRAILS_API_KEY is not configured.",
-            overridable=False,
+            reason="not_configured",
         )
     if not settings["project_id"]:
-        raise GuardrailError(
+        raise FireguardUnavailableError(
             "FIRERAVEN_PROJECT_ID is not configured.",
-            overridable=False,
+            reason="not_configured",
         )
     return settings
 
@@ -125,8 +155,5 @@ def handle_failure(exc: Exception, fail_closed: bool, session_id: str = "") -> N
     if isinstance(exc, GuardrailError):
         print(str(exc), file=sys.stderr)
         sys.exit(2)
-    if fail_closed:
-        print(f"Fireraven guardrail hook: {exc}", file=sys.stderr)
-        sys.exit(2)
-    emit_unavailable_notice(session_id or "unknown-session")
+    handle_service_failure(exc, fail_closed=fail_closed, session_id=session_id)
     sys.exit(0)

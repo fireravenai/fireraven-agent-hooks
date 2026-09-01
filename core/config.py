@@ -63,3 +63,8 @@ def resolve_settings(config: dict[str, str]) -> dict[str, str | float]:
         "timeout_sec": timeout_sec,
         "fail_closed": fail_mode != "open",
     }
+
+
+def fail_closed_from_config(config: dict[str, str]) -> bool:
+    fail_mode = get_setting(config, "FIRERAVEN_FAIL_MODE", DEFAULT_FAIL_MODE).lower()
+    return fail_mode != "open"
