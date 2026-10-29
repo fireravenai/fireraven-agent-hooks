@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -237,6 +238,106 @@ class ClaudeFailOpenNoticeTests(unittest.TestCase):
                             with self.assertRaises(SystemExit) as cm:
                                 claude_adapter.main()
         self.assertEqual(cm.exception.code, 0)
+
+
+class ToastIconTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self._hooks_root = Path(self._tmpdir.name)
+        self._patcher = mock.patch("core.unavailable_notice.hooks_root", return_value=self._hooks_root)
+        self._patcher.start()
+        self.addCleanup(self._patcher.stop)
+
+    def _place_icon(self) -> Path:
+        assets = self._hooks_root / "assets"
+        assets.mkdir(parents=True, exist_ok=True)
+        icon = assets / "fireraven.ico"
+        icon.write_bytes(b"fake-ico")
+        return icon
+
+    def test_toast_icon_path_missing(self) -> None:
+        from core.unavailable_notice import toast_icon_path
+
+        self.assertIsNone(toast_icon_path())
+
+    def test_toast_icon_path_present(self) -> None:
+        from core.unavailable_notice import toast_icon_path
+
+        icon = self._place_icon()
+        self.assertEqual(toast_icon_path(), icon)
+
+    def test_linux_toast_includes_icon(self) -> None:
+        from core.unavailable_notice import _linux_toast
+
+        icon = self._place_icon()
+        with mock.patch("core.unavailable_notice.shutil.which", return_value="/usr/bin/notify-send"):
+            with mock.patch("core.unavailable_notice.subprocess.Popen") as popen:
+                _linux_toast("hello")
+        cmd = popen.call_args.args[0]
+        self.assertIn("-i", cmd)
+        self.assertIn(str(icon), cmd)
+        self.assertEqual(cmd[-2:], ["Fireraven", "hello"])
+
+    def test_linux_toast_without_icon(self) -> None:
+        from core.unavailable_notice import _linux_toast
+
+        with mock.patch("core.unavailable_notice.shutil.which", return_value="/usr/bin/notify-send"):
+            with mock.patch("core.unavailable_notice.subprocess.Popen") as popen:
+                _linux_toast("hello")
+        cmd = popen.call_args.args[0]
+        self.assertNotIn("-i", cmd)
+        self.assertEqual(cmd[-2:], ["Fireraven", "hello"])
+
+    def test_windows_toast_fires_action_center_only(self) -> None:
+        from core.unavailable_notice import _windows_toast
+
+        self._place_icon()
+        with mock.patch("core.unavailable_notice.subprocess.Popen") as popen:
+            _windows_toast("hello")
+        self.assertEqual(popen.call_count, 1)
+        toast_argv = popen.call_args.args[0]
+        self.assertEqual(toast_argv[0], "powershell")
+        self.assertIn("-File", toast_argv)
+        toast_path = Path(toast_argv[-1])
+        self.assertTrue(toast_path.is_file())
+        toast_script = toast_path.read_text(encoding="utf-8")
+        self.assertIn("ToastNotification", toast_script)
+        self.assertIn("ToastGeneric", toast_script)
+        self.assertIn("hello", toast_script)
+        self.assertIn("Fireraven", toast_script)
+        self.assertIn("Fireraven.FireGuard", toast_script)
+        self.assertNotIn("1AC14E77-02E7-4E5D-B744-2EB1AE5198B7", toast_script)
+        self.assertIn("Start-Sleep", toast_script)
+        self.assertNotIn("MessageBoxTimeoutW", toast_script)
+        self.assertNotIn("NotifyIcon", toast_script)
+        toast_path.unlink(missing_ok=True)
+        kwargs = popen.call_args.kwargs
+        self.assertIs(kwargs.get("stdout"), subprocess.DEVNULL)
+        self.assertIs(kwargs.get("stderr"), subprocess.DEVNULL)
+        self.assertIs(kwargs.get("stdin"), subprocess.DEVNULL)
+        self.assertTrue(kwargs.get("close_fds"))
+        flags = kwargs.get("creationflags", 0)
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            self.assertTrue(flags & subprocess.CREATE_NO_WINDOW)
+        if hasattr(subprocess, "DETACHED_PROCESS"):
+            self.assertFalse(flags & subprocess.DETACHED_PROCESS)
+
+    def test_windows_action_center_xml_escapes_special_chars(self) -> None:
+        from core.unavailable_notice import _windows_toast
+
+        tricky = 'A & B <C> "D" \'E\''
+        with mock.patch("core.unavailable_notice.subprocess.Popen") as popen:
+            _windows_toast(tricky)
+        toast_path = Path(popen.call_args.args[0][-1])
+        toast_script = toast_path.read_text(encoding="utf-8")
+        toast_path.unlink(missing_ok=True)
+        self.assertIn("&amp;", toast_script)
+        self.assertIn("&lt;", toast_script)
+        self.assertIn("&gt;", toast_script)
+        self.assertIn("&quot;", toast_script)
+        self.assertIn("&apos;", toast_script)
+        self.assertIn("ToastGeneric", toast_script)
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ beginDialog:
       input:
         binding:
           conversation_id: =Text(ParseJSON(Topic.createConversationCopilot).id)
-          guardrails: "=[{type: \"policies_guardrail\"},{type: \"security_guardrail\"}]"
+          guardrails: "=[{type: \"policies_guardrail\"},{type: \"security_guardrail\"},{type: \"pii_guardrail\"}]"
           messages_history: "=Table({ role: \"user\", content: System.LastMessage.Text})"
       output:
         kind: SingleVariableOutputBinding

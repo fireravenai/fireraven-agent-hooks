@@ -14,7 +14,7 @@ from core.guardrail import (
 )
 from core.hook_io import read_hook_input
 from core.human_override import OverrideDecision, resolve_override
-from core.serializers import infer_devin_event, serialize_devin
+from core.serializers import USER_PROMPT_EVENTS, infer_devin_event, serialize_devin
 from core.unavailable_notice import emit_unavailable_notice
 
 
@@ -83,7 +83,12 @@ def main() -> None:
         sys.exit(0)
 
     try:
-        run_input_check(session_id, text, label="Devin Local")
+        run_input_check(
+            session_id,
+            text,
+            label="Devin Local",
+            enforce_pii=hook_event in USER_PROMPT_EVENTS,
+        )
     except FireguardUnavailableError as exc:
         if settings["fail_closed"]:
             if hook_event == "PreToolUse":

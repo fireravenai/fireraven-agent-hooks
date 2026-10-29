@@ -2,8 +2,161 @@
 # Shared install/uninstall helpers for Fireraven agent hooks.
 
 FIRERAVEN_HOOKS_REPO="${FIRERAVEN_HOOKS_REPO:-fireravenai/fireraven-agent-hooks}"
-FIRERAVEN_HOOKS_REF="${FIRERAVEN_HOOKS_REF:-main}"
+# REF default is channel-specific (main for GitHub, dev for GitLab) — set in resolve_channel.
 FIRERAVEN_AGENT="${FIRERAVEN_AGENT:-windsurf}"
+FIRERAVEN_HOOKS_GITLAB_HOST="${FIRERAVEN_HOOKS_GITLAB_HOST:-https://gitlab.com}"
+
+# Channel globals set by resolve_channel: CHANNEL, RAW_BASE, GITLAB_HOST, GITLAB_PROJECT, GITLAB_REF
+CHANNEL="github"
+RAW_BASE=""
+GITLAB_HOST=""
+GITLAB_PROJECT=""
+GITLAB_REF=""
+
+urlencode() {
+    python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
+}
+
+# Parse https://gitlab.com/group/proj/-/raw/ref → project + ref (stdout: project\nref\nhost)
+parse_gitlab_raw_base() {
+    raw="$1"
+    python3 -c '
+import re, sys
+u = sys.argv[1].rstrip("/")
+m = re.match(
+    r"^(https?://[^/]+)/(.+)/-/raw/([^/]+)$",
+    u,
+)
+if not m:
+    sys.exit(1)
+host, project, ref = m.group(1), m.group(2), m.group(3)
+print(host)
+print(project)
+print(ref)
+' "$raw"
+}
+
+resolve_channel() {
+    CHANNEL="github"
+    RAW_BASE=""
+    GITLAB_HOST=""
+    GITLAB_PROJECT=""
+    GITLAB_REF=""
+
+    if [ -n "${FIRERAVEN_HOOKS_GITLAB_PROJECT:-}" ]; then
+        CHANNEL="gitlab_api"
+        GITLAB_HOST="${FIRERAVEN_HOOKS_GITLAB_HOST%/}"
+        GITLAB_PROJECT="${FIRERAVEN_HOOKS_GITLAB_PROJECT}"
+        # When only project is set, prefer dev (GitLab testing). Explicit FIRERAVEN_HOOKS_REF wins.
+        GITLAB_REF="${FIRERAVEN_HOOKS_REF:-dev}"
+        return 0
+    fi
+
+    if [ -n "${FIRERAVEN_HOOKS_RAW_BASE:-}" ]; then
+        case "${FIRERAVEN_HOOKS_RAW_BASE}" in
+            *gitlab*"/-/raw/"*|*"/-/raw/"*)
+                parsed="$(parse_gitlab_raw_base "${FIRERAVEN_HOOKS_RAW_BASE%/}" 2>/dev/null)" || {
+                    error "Could not parse GitLab RAW_BASE (expected …/group/project/-/raw/<ref>)"
+                }
+                CHANNEL="gitlab_api"
+                GITLAB_HOST="$(printf '%s\n' "$parsed" | sed -n '1p')"
+                GITLAB_PROJECT="$(printf '%s\n' "$parsed" | sed -n '2p')"
+                GITLAB_REF="$(printf '%s\n' "$parsed" | sed -n '3p')"
+                return 0
+                ;;
+            *)
+                CHANNEL="github"
+                RAW_BASE="${FIRERAVEN_HOOKS_RAW_BASE%/}"
+                FIRERAVEN_HOOKS_REF="${FIRERAVEN_HOOKS_REF:-main}"
+                return 0
+                ;;
+        esac
+    fi
+
+    CHANNEL="github"
+    FIRERAVEN_HOOKS_REF="${FIRERAVEN_HOOKS_REF:-main}"
+    RAW_BASE="https://raw.githubusercontent.com/${FIRERAVEN_HOOKS_REPO}/refs/heads/${FIRERAVEN_HOOKS_REF}"
+}
+
+require_gitlab_token() {
+    if [ "$CHANNEL" = "gitlab_api" ] && [ -z "${FIRERAVEN_HOOKS_TOKEN:-}" ]; then
+        error "FIRERAVEN_HOOKS_TOKEN is required for private GitLab installs (PRIVATE-TOKEN)"
+    fi
+}
+
+file_url() {
+    # Prefixed names: POSIX sh has no local; avoid clobbering callers' path/dest.
+    _fr_path="$1"
+    if [ "$CHANNEL" = "gitlab_api" ]; then
+        enc_project="$(urlencode "$GITLAB_PROJECT")"
+        enc_path="$(urlencode "$_fr_path")"
+        printf '%s/api/v4/projects/%s/repository/files/%s/raw?ref=%s' \
+            "$GITLAB_HOST" "$enc_project" "$enc_path" "$GITLAB_REF"
+        return 0
+    fi
+    printf '%s/%s' "${RAW_BASE%/}" "$_fr_path"
+}
+
+download_file() {
+    # Prefixed names: POSIX sh has no local; avoid clobbering callers' path/dest.
+    _fr_path="$1"
+    _fr_dest="$2"
+    _fr_url="$(file_url "$_fr_path")"
+    mkdir -p "$(dirname "$_fr_dest")"
+    info "Downloading ${_fr_path}"
+    if [ "$CHANNEL" = "gitlab_api" ]; then
+        curl -fsSL -H "PRIVATE-TOKEN: ${FIRERAVEN_HOOKS_TOKEN}" "$_fr_url" -o "$_fr_dest" \
+            || error "Failed to download $_fr_path"
+    else
+        curl -fsSL "$_fr_url" -o "$_fr_dest" || error "Failed to download $_fr_url"
+    fi
+}
+
+# Compat: resolve_raw_base still used by older callers / local install messaging
+resolve_raw_base() {
+    resolve_channel
+    if [ "$CHANNEL" = "gitlab_api" ]; then
+        printf '%s' "$GITLAB_HOST"
+        return 0
+    fi
+    printf '%s' "$RAW_BASE"
+}
+
+write_install_meta() {
+    dest_dir="$1"
+    agents="$2"
+    mkdir -p "$dest_dir"
+    meta_path="${dest_dir}/install_meta.json"
+    esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+    esc_agents="$(esc "$agents")"
+    esc_channel="$(esc "$CHANNEL")"
+    esc_base="$(esc "$RAW_BASE")"
+    esc_repo="$(esc "${FIRERAVEN_HOOKS_REPO}")"
+    esc_ref="$(esc "${FIRERAVEN_HOOKS_REF}")"
+    esc_host="$(esc "$GITLAB_HOST")"
+    esc_project="$(esc "$GITLAB_PROJECT")"
+    esc_gref="$(esc "$GITLAB_REF")"
+    if [ "$CHANNEL" = "gitlab_api" ]; then
+        printf '{\n  "agents": "%s",\n  "channel": "%s",\n  "gitlab_host": "%s",\n  "project": "%s",\n  "ref": "%s",\n  "raw_base": ""\n}\n' \
+            "$esc_agents" "$esc_channel" "$esc_host" "$esc_project" "$esc_gref" >"$meta_path"
+    else
+        printf '{\n  "agents": "%s",\n  "channel": "%s",\n  "raw_base": "%s",\n  "repo": "%s",\n  "ref": "%s"\n}\n' \
+            "$esc_agents" "$esc_channel" "$esc_base" "$esc_repo" "$esc_ref" >"$meta_path"
+    fi
+}
+
+ensure_hooks_token_in_config() {
+    dest_dir="$1"
+    config_env="${dest_dir}/config.env"
+    [ -f "$config_env" ] || return 0
+    [ -n "${FIRERAVEN_HOOKS_TOKEN:-}" ] || return 0
+    if grep -q '^FIRERAVEN_HOOKS_TOKEN=' "$config_env" 2>/dev/null; then
+        return 0
+    fi
+    printf '\nFIRERAVEN_HOOKS_TOKEN=%s\n' "$FIRERAVEN_HOOKS_TOKEN" >>"$config_env"
+    chmod 600 "$config_env"
+    info "Wrote FIRERAVEN_HOOKS_TOKEN into $config_env for update checks"
+}
 
 WINDSURF_INSTALL_DIR="${FIRERAVEN_INSTALL_DIR:-$HOME/.codeium/windsurf}"
 CURSOR_INSTALL_DIR="${FIRERAVEN_CURSOR_INSTALL_DIR:-$HOME/.cursor}"
@@ -47,13 +200,10 @@ merge_hooks_scripts_dir() {
 }
 
 download_merge_scripts() {
-    raw_base="$1"
-    dest_dir="$2"
+    dest_dir="$1"
     mkdir -p "$dest_dir"
     for file in jsonc_modify.py merge_hooks_config.py; do
-        url="${raw_base}/scripts/${file}"
-        info "Downloading scripts/${file}"
-        curl -fsSL "$url" -o "${dest_dir}/${file}" || error "Failed to download $url"
+        download_file "scripts/${file}" "${dest_dir}/${file}"
     done
 }
 
@@ -78,12 +228,14 @@ setup_config_env() {
 
     if [ -f "$config_env" ]; then
         info "Keeping existing config: $config_env"
+        ensure_hooks_token_in_config "$dest_dir"
         return 0
     fi
     [ -f "$example_env" ] || error "Missing config template: $example_env"
     cp "$example_env" "$config_env"
     chmod 600 "$config_env"
     warn "Created $config_env — add FIRERAVEN_GUARDRAILS_API_KEY and FIRERAVEN_PROJECT_ID"
+    ensure_hooks_token_in_config "$dest_dir"
 }
 
 copy_package_tree() {
@@ -91,8 +243,11 @@ copy_package_tree() {
     dest_dir="$2"
     mkdir -p "$dest_dir"
 
-    rm -rf "${dest_dir}/core" "${dest_dir}/adapters"
+    rm -rf "${dest_dir}/core" "${dest_dir}/adapters" "${dest_dir}/assets"
     cp -R "${src_root}/core" "${src_root}/adapters" "${dest_dir}/"
+    if [ -d "${src_root}/assets" ]; then
+        cp -R "${src_root}/assets" "${dest_dir}/"
+    fi
 
     for file in windsurf_guardrail.py cursor_guardrail.py run_cursor_guardrail.ps1 claude_guardrail.py \
         github_copilot_guardrail.py run_github_copilot_guardrail.ps1 \
@@ -103,32 +258,33 @@ copy_package_tree() {
         fi
     done
 
+    if [ -f "${src_root}/VERSION" ]; then
+        cp "${src_root}/VERSION" "${dest_dir}/VERSION"
+    fi
+
     chmod +x "${dest_dir}/"*.py 2>/dev/null || true
 }
 
 download_package_tree() {
-    raw_base="$1"
-    dest_dir="$2"
+    dest_dir="$1"
     mkdir -p "$dest_dir"
 
     for path in \
+        VERSION \
         core/__init__.py core/config.py core/session_store.py core/fireraven_client.py \
         core/serializers.py core/guardrail.py core/human_override.py core/hook_io.py \
+        core/unavailable_notice.py core/secured_notice.py core/update_check.py \
         adapters/__init__.py adapters/windsurf.py adapters/cursor.py adapters/claude.py \
-        adapters/github_copilot.py adapters/devin.py; do
-        url="${raw_base}/${path}"
-        mkdir -p "${dest_dir}/$(dirname "$path")"
-        info "Downloading ${path}"
-        curl -fsSL "$url" -o "${dest_dir}/${path}" || error "Failed to download $url"
+        adapters/github_copilot.py adapters/devin.py \
+        assets/fireraven.ico; do
+        download_file "$path" "${dest_dir}/${path}"
     done
 
     for file in _bootstrap.py windsurf_guardrail.py cursor_guardrail.py run_cursor_guardrail.ps1 claude_guardrail.py \
         github_copilot_guardrail.py run_github_copilot_guardrail.ps1 \
         devin_guardrail.py \
         fireraven_input_guardrail.py config.example.env README.md; do
-        url="${raw_base}/hooks/${file}"
-        info "Downloading hooks/${file}"
-        curl -fsSL "$url" -o "${dest_dir}/${file}" || error "Failed to download $url"
+        download_file "hooks/${file}" "${dest_dir}/${file}"
     done
     chmod +x "${dest_dir}/"*.py 2>/dev/null || true
 }

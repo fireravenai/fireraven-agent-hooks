@@ -12,7 +12,13 @@ from core.guardrail import (
 )
 from core.hook_io import read_hook_input
 from core.human_override import OverrideDecision, resolve_override
-from core.serializers import CURSOR_AUDIT_EVENTS, CURSOR_INPUT_EVENTS, serialize_cursor
+from core.serializers import (
+    CURSOR_AUDIT_EVENTS,
+    CURSOR_INPUT_EVENTS,
+    USER_PROMPT_EVENTS,
+    serialize_cursor,
+)
+from core.secured_notice import emit_secured_notice
 from core.unavailable_notice import emit_unavailable_notice
 
 CURSOR_OVERRIDE_EVENTS = {
@@ -169,10 +175,12 @@ def main() -> None:
         notice = emit_unavailable_notice(session_id, reason="not_configured")
         _allow(hook_event, user_message=notice)
 
+    enforce_pii = hook_event in USER_PROMPT_EVENTS
+
     if hook_event in CURSOR_AUDIT_EVENTS:
         notice: str | None = None
         try:
-            run_input_check(session_id, text, label="Cursor")
+            run_input_check(session_id, text, label="Cursor", enforce_pii=enforce_pii)
         except GuardrailError as exc:
             audit_log = {
                 "session_id": session_id,
@@ -215,7 +223,7 @@ def main() -> None:
         _allow(hook_event, user_message=notice)
 
     try:
-        run_input_check(session_id, text, label="Cursor")
+        run_input_check(session_id, text, label="Cursor", enforce_pii=enforce_pii)
     except FireguardUnavailableError as exc:
         _handle_service_failure(hook_event, session_id, exc, fail_closed=fail_closed)
     except GuardrailError as exc:
@@ -223,7 +231,10 @@ def main() -> None:
     except Exception as exc:
         _handle_service_failure(hook_event, session_id, exc, fail_closed=fail_closed)
 
-    _allow(hook_event)
+    notice = None
+    if hook_event == "beforeSubmitPrompt":
+        notice = emit_secured_notice(session_id)
+    _allow(hook_event, user_message=notice)
 
 
 def settings_fail_closed(config: dict) -> bool:

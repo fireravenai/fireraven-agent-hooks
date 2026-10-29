@@ -12,9 +12,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.fireraven_client import violation_message
+from core.fireraven_client import evaluate_input_result, pii_violation_message, violation_message
+from core.guardrail import GuardrailError
 from core.human_override import OverrideDecision, request_human_override, resolve_override
 from core.serializers import (
+    USER_PROMPT_EVENTS,
     infer_claude_event,
     serialize_claude,
     serialize_cursor,
@@ -152,6 +154,87 @@ class ViolationMessageTests(unittest.TestCase):
             }
         )
         self.assertEqual(text, "Blocked by Fireraven FireGuard.")
+
+
+_PII_ONLY_UNSAFE = {
+    "is_safe": False,
+    "security_guardrail_results": {"is_safe": True},
+    "policies_guardrail_results": {"is_safe": True, "policies": []},
+    "pii_guardrail_results": {
+        "is_safe": False,
+        "masked_text": "Hi my name is [PERSON_NAME]",
+    },
+    "overall_response": "Hi my name is [PERSON_NAME]",
+}
+
+_POLICY_AND_PII_UNSAFE = {
+    "is_safe": False,
+    "security_guardrail_results": {"is_safe": True},
+    "policies_guardrail_results": {
+        "is_safe": False,
+        "policies": [
+            {
+                "name": "no-jailbreak",
+                "is_safe": False,
+                "policy_violation_message": "blocked by policy",
+            }
+        ],
+    },
+    "pii_guardrail_results": {
+        "is_safe": False,
+        "masked_text": "Hi [PERSON_NAME]",
+    },
+}
+
+
+class EvaluateInputResultTests(unittest.TestCase):
+    def test_pii_only_allows_when_not_enforced(self) -> None:
+        evaluate_input_result(_PII_ONLY_UNSAFE, enforce_pii=False)
+
+    def test_pii_only_blocks_when_enforced(self) -> None:
+        with self.assertRaises(GuardrailError) as cm:
+            evaluate_input_result(_PII_ONLY_UNSAFE, enforce_pii=True)
+        self.assertFalse(cm.exception.overridable)
+        self.assertIn("PII detected", str(cm.exception))
+        self.assertIn("[PERSON_NAME]", str(cm.exception))
+
+    def test_policy_wins_over_pii_when_both_unsafe(self) -> None:
+        with self.assertRaises(GuardrailError) as cm:
+            evaluate_input_result(_POLICY_AND_PII_UNSAFE, enforce_pii=True)
+        self.assertFalse(cm.exception.overridable)
+        message = str(cm.exception)
+        self.assertIn("blocked by policy", message)
+        self.assertIn("PII detected", message)
+        self.assertIn("Hi [PERSON_NAME]", message)
+        self.assertLess(message.index("blocked by policy"), message.index("PII detected"))
+
+    def test_security_blocks_even_without_pii_enforce(self) -> None:
+        result = {
+            "is_safe": False,
+            "security_guardrail_results": {
+                "is_safe": False,
+                "security_violation_message": "prompt injection",
+            },
+            "pii_guardrail_results": {"is_safe": False, "masked_text": "x"},
+        }
+        with self.assertRaises(GuardrailError) as cm:
+            evaluate_input_result(result, enforce_pii=False)
+        self.assertIn("Security", str(cm.exception))
+
+    def test_pii_message_without_masked_text(self) -> None:
+        text = pii_violation_message(
+            {"pii_guardrail_results": {"is_safe": False, "masked_text": None}}
+        )
+        self.assertIn("PII detected", text)
+        self.assertNotIn("Suggested redacted", text)
+
+    def test_user_prompt_events_set(self) -> None:
+        self.assertIn("beforeSubmitPrompt", USER_PROMPT_EVENTS)
+        self.assertIn("pre_user_prompt", USER_PROMPT_EVENTS)
+        self.assertIn("UserPromptSubmit", USER_PROMPT_EVENTS)
+        self.assertIn("userPromptSubmitted", USER_PROMPT_EVENTS)
+        self.assertNotIn("beforeMCPExecution", USER_PROMPT_EVENTS)
+        self.assertNotIn("PreToolUse", USER_PROMPT_EVENTS)
 
 
 class SerializeCursorTests(unittest.TestCase):
@@ -497,6 +580,58 @@ class CursorPretoolDeferTests(unittest.TestCase):
         check.assert_not_called()
         printer.assert_called()
         self.assertIn("allow", printer.call_args.args[0])
+
+    def test_before_submit_prompt_enforces_pii(self) -> None:
+        from adapters import cursor as cursor_adapter
+
+        payload = {
+            "hook_event_name": "beforeSubmitPrompt",
+            "conversation_id": "s1",
+            "prompt": "hello",
+        }
+        with mock.patch.object(cursor_adapter, "read_hook_input", return_value=payload):
+            with mock.patch.object(cursor_adapter, "load_config", return_value={}):
+                with mock.patch.object(
+                    cursor_adapter,
+                    "resolve_settings",
+                    return_value={"fail_closed": False},
+                ):
+                    with mock.patch.object(
+                        cursor_adapter, "run_input_check", return_value={}
+                    ) as check:
+                        with mock.patch.object(
+                            cursor_adapter, "emit_secured_notice", return_value=None
+                        ):
+                            with mock.patch("builtins.print"):
+                                with self.assertRaises(SystemExit):
+                                    cursor_adapter.main()
+        check.assert_called_once()
+        self.assertTrue(check.call_args.kwargs.get("enforce_pii"))
+
+    def test_before_mcp_does_not_enforce_pii(self) -> None:
+        from adapters import cursor as cursor_adapter
+
+        payload = {
+            "hook_event_name": "beforeMCPExecution",
+            "conversation_id": "s1",
+            "tool_name": "search",
+            "tool_input": {"query": "John Doe"},
+        }
+        with mock.patch.object(cursor_adapter, "read_hook_input", return_value=payload):
+            with mock.patch.object(cursor_adapter, "load_config", return_value={}):
+                with mock.patch.object(
+                    cursor_adapter,
+                    "resolve_settings",
+                    return_value={"fail_closed": False},
+                ):
+                    with mock.patch.object(
+                        cursor_adapter, "run_input_check", return_value={}
+                    ) as check:
+                        with mock.patch("builtins.print"):
+                            with self.assertRaises(SystemExit):
+                                cursor_adapter.main()
+        check.assert_called_once()
+        self.assertFalse(check.call_args.kwargs.get("enforce_pii"))
 
 
 class CursorAdapterOverrideTests(unittest.TestCase):

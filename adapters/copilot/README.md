@@ -14,7 +14,7 @@ Copilot does not use local shell hooks. FireGuard runs inside **Power Platform c
 
 | File | Purpose |
 |------|---------|
-| `topics/01_input_guardrail.yaml` | Create/reuse conversation, run input guardrails, block unsafe prompts |
+| `topics/01_input_guardrail.yaml` | Create/reuse conversation, run input guardrails (policies, security, PII), block unsafe prompts |
 | `topics/02_output_guardrail.yaml` | Run output guardrails using stored `input_id` (audit/block in flow) |
 
 ## Flow overview

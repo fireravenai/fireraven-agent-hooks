@@ -14,7 +14,7 @@ from core.guardrail import (
 )
 from core.hook_io import read_hook_input
 from core.human_override import OverrideDecision, log_override_audit, resolve_override
-from core.serializers import infer_claude_event, serialize_claude
+from core.serializers import USER_PROMPT_EVENTS, infer_claude_event, serialize_claude
 from core.unavailable_notice import emit_unavailable_notice
 
 # GUI hosts where native permissionDecision:ask is unreliable or has no TTY prompt.
@@ -124,9 +124,11 @@ def main() -> None:
         emit_unavailable_notice(session_id, reason="not_configured")
         sys.exit(0)
 
+    enforce_pii = hook_event in USER_PROMPT_EVENTS
+
     if hook_event == "PostToolUse":
         try:
-            run_input_check(session_id, text, label="Claude Code")
+            run_input_check(session_id, text, label="Claude Code", enforce_pii=False)
         except GuardrailError as exc:
             print(
                 json.dumps(
@@ -162,7 +164,7 @@ def main() -> None:
         sys.exit(0)
 
     try:
-        run_input_check(session_id, text, label="Claude Code")
+        run_input_check(session_id, text, label="Claude Code", enforce_pii=enforce_pii)
     except FireguardUnavailableError as exc:
         handle_service_failure(exc, fail_closed=settings["fail_closed"], session_id=session_id)
     except GuardrailError as exc:

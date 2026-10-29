@@ -16,6 +16,7 @@ from core.human_override import OverrideDecision, resolve_override
 from core.serializers import (
     GITHUB_COPILOT_INPUT_EVENTS,
     GITHUB_COPILOT_OUTPUT_AUDIT_EVENTS,
+    USER_PROMPT_EVENTS,
     serialize_github_copilot,
 )
 from core.unavailable_notice import emit_unavailable_notice
@@ -105,7 +106,12 @@ def main() -> None:
         _allow()
 
     try:
-        run_input_check(session_id, text, label="GitHub Copilot")
+        run_input_check(
+            session_id,
+            text,
+            label="GitHub Copilot",
+            enforce_pii=hook_event in USER_PROMPT_EVENTS,
+        )
     except FireguardUnavailableError as exc:
         if fail_closed:
             if hook_event == "preToolUse":

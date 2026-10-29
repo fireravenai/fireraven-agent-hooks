@@ -47,6 +47,16 @@ GITHUB_COPILOT_OUTPUT_AUDIT_EVENTS = {
     "postToolUse",
 }
 
+# Typed user chat only — PII is enforced on these events, not on tool/MCP/file hooks.
+USER_PROMPT_EVENTS = frozenset(
+    {
+        "beforeSubmitPrompt",
+        "pre_user_prompt",
+        "UserPromptSubmit",
+        "userPromptSubmitted",
+    }
+)
+
 
 def local_sensitive_path_block(file_path: str) -> str | None:
     if SENSITIVE_PATH_RE.search(file_path):

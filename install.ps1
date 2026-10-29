@@ -3,7 +3,11 @@ param(
     [string]$Agent = $(if ($env:FIRERAVEN_AGENT) { $env:FIRERAVEN_AGENT } else { "windsurf" }),
     [switch]$Project,
     [string]$HooksRepo = $(if ($env:FIRERAVEN_HOOKS_REPO) { $env:FIRERAVEN_HOOKS_REPO } else { "fireravenai/fireraven-agent-hooks" }),
-    [string]$HooksRef = $(if ($env:FIRERAVEN_HOOKS_REF) { $env:FIRERAVEN_HOOKS_REF } else { "main" })
+    [string]$HooksRef = $(if ($env:FIRERAVEN_HOOKS_REF) { $env:FIRERAVEN_HOOKS_REF } else { "" }),
+    [string]$HooksRawBase = $(if ($env:FIRERAVEN_HOOKS_RAW_BASE) { $env:FIRERAVEN_HOOKS_RAW_BASE } else { "" }),
+    [string]$HooksGitlabProject = $(if ($env:FIRERAVEN_HOOKS_GITLAB_PROJECT) { $env:FIRERAVEN_HOOKS_GITLAB_PROJECT } else { "" }),
+    [string]$HooksGitlabHost = $(if ($env:FIRERAVEN_HOOKS_GITLAB_HOST) { $env:FIRERAVEN_HOOKS_GITLAB_HOST } else { "https://gitlab.com" }),
+    [string]$HooksToken = $(if ($env:FIRERAVEN_HOOKS_TOKEN) { $env:FIRERAVEN_HOOKS_TOKEN } else { "" })
 )
 
 $ErrorActionPreference = "Stop"
@@ -84,6 +88,277 @@ function Get-GitHubCopilotHooksDir { Join-Path (Get-GitHubCopilotInstallDir) "ho
 function Get-GitHubCopilotHooksJson { Join-Path (Get-GitHubCopilotInstallDir) "hooks\fireraven-fireguard.json" }
 function Get-GitHubCopilotProjectHooksDir { Join-Path (Get-Location) ".github\hooks\fireraven" }
 function Get-GitHubCopilotProjectHooksJson { Join-Path (Get-Location) ".github\hooks\fireraven-fireguard.json" }
+
+# Channel state filled by Resolve-Channel
+$script:Channel = "github"
+$script:RawBase = ""
+$script:GitlabHost = ""
+$script:GitlabProject = ""
+$script:GitlabRef = ""
+
+function Resolve-Channel {
+    $script:Channel = "github"
+    $script:RawBase = ""
+    $script:GitlabHost = ""
+    $script:GitlabProject = ""
+    $script:GitlabRef = ""
+
+    if ($HooksGitlabProject -and $HooksGitlabProject.Trim()) {
+        $script:Channel = "gitlab_api"
+        $script:GitlabHost = $HooksGitlabHost.TrimEnd("/")
+        $script:GitlabProject = $HooksGitlabProject.Trim()
+        $script:GitlabRef = if ($HooksRef) { $HooksRef } else { "dev" }
+        if (-not $HooksToken) {
+            throw "FIRERAVEN_HOOKS_TOKEN is required for private GitLab installs (PRIVATE-TOKEN)"
+        }
+        return
+    }
+
+    if ($HooksRawBase -and $HooksRawBase.Trim()) {
+        $raw = $HooksRawBase.Trim().TrimEnd("/")
+        if ($raw -match '^(https?://[^/]+)/(.+)/-/raw/([^/]+)$') {
+            $script:Channel = "gitlab_api"
+            $script:GitlabHost = $Matches[1]
+            $script:GitlabProject = $Matches[2]
+            $script:GitlabRef = $Matches[3]
+            if (-not $HooksToken) {
+                throw "FIRERAVEN_HOOKS_TOKEN is required for private GitLab installs (PRIVATE-TOKEN)"
+            }
+            return
+        }
+        $script:Channel = "github"
+        $script:RawBase = $raw
+        if (-not $HooksRef) { $script:HooksRefLocal = "main" } else { $script:HooksRefLocal = $HooksRef }
+        return
+    }
+
+    $ref = if ($HooksRef) { $HooksRef } else { "main" }
+    $script:Channel = "github"
+    $script:RawBase = "https://raw.githubusercontent.com/$HooksRepo/refs/heads/$ref"
+    $script:HooksRefLocal = $ref
+}
+
+function Get-FileUrl {
+    param([string]$Path)
+    if ($script:Channel -eq "gitlab_api") {
+        $encProject = [uri]::EscapeDataString($script:GitlabProject)
+        $encPath = [uri]::EscapeDataString($Path)
+        return "$($script:GitlabHost)/api/v4/projects/$encProject/repository/files/$encPath/raw?ref=$($script:GitlabRef)"
+    }
+    return "$($script:RawBase.TrimEnd('/'))/$Path"
+}
+
+function Write-InstallMeta {
+    param(
+        [string]$DestinationDir,
+        [string]$Agents
+    )
+    New-Item -ItemType Directory -Force -Path $DestinationDir | Out-Null
+    if ($script:Channel -eq "gitlab_api") {
+        $meta = @{
+            agents      = $Agents
+            channel     = "gitlab_api"
+            gitlab_host = $script:GitlabHost
+            project     = $script:GitlabProject
+            ref         = $script:GitlabRef
+            raw_base    = ""
+        }
+    }
+    else {
+        $ref = if ($script:HooksRefLocal) { $script:HooksRefLocal } elseif ($HooksRef) { $HooksRef } else { "main" }
+        $meta = @{
+            agents   = $Agents
+            channel  = "github"
+            raw_base = $script:RawBase
+            repo     = $HooksRepo
+            ref      = $ref
+        }
+    }
+    $path = Join-Path $DestinationDir "install_meta.json"
+    ($meta | ConvertTo-Json -Depth 5) + "`n" | Set-Content -Encoding UTF8 -Path $path
+}
+
+function Ensure-HooksTokenInConfig {
+    param([string]$DestinationDir)
+    if (-not $HooksToken) { return }
+    $configEnv = Join-Path $DestinationDir "config.env"
+    if (-not (Test-Path $configEnv)) { return }
+    $text = Get-Content -Raw -Path $configEnv
+    if ($text -match '(?m)^FIRERAVEN_HOOKS_TOKEN=') { return }
+    Add-Content -Path $configEnv -Value "`nFIRERAVEN_HOOKS_TOKEN=$HooksToken`n" -Encoding UTF8
+    Write-Info "Wrote FIRERAVEN_HOOKS_TOKEN into $configEnv for update checks"
+}
+
+# Toast branding: Start Menu shortcut + AppUserModelID (must match core/unavailable_notice.py).
+$script:FireravenToastAumid = "Fireraven.FireGuard"
+$script:FireravenToastShortcutName = "Fireraven.lnk"
+
+function Get-FireravenToastShortcutDir {
+    $appData = if ($env:APPDATA) { $env:APPDATA } else { Join-Path (Get-UserHome) "AppData\Roaming" }
+    return (Join-Path $appData "Microsoft\Windows\Start Menu\Programs\Fireraven")
+}
+
+function Find-FireravenToastIcon {
+    foreach ($hooksDir in @(
+        (Get-CursorHooksDir),
+        (Get-WindsurfHooksDir),
+        (Get-ClaudeHooksDir),
+        (Get-DevinHooksDir),
+        (Get-GitHubCopilotHooksDir),
+        (Get-GitHubCopilotProjectHooksDir)
+    )) {
+        $icon = Join-Path $hooksDir "assets\fireraven.ico"
+        if (Test-Path -LiteralPath $icon) {
+            return $icon
+        }
+    }
+    return $null
+}
+
+function Ensure-FireravenShortcutAumidType {
+    if ("FireravenShortcutAumid.Creator" -as [type]) {
+        return
+    }
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace FireravenShortcutAumid {
+    [ComImport]
+    [Guid("00021401-0000-0000-C000-000000000046")]
+    public class CShellLink { }
+
+    [ComImport]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    [Guid("000214F9-0000-0000-C000-000000000046")]
+    public interface IShellLinkW {
+        void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile, int cchMaxPath, IntPtr pfd, int fFlags);
+        void GetIDList(out IntPtr ppidl);
+        void SetIDList(IntPtr pidl);
+        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszName, int cchMaxName);
+        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszDir, int cchMaxPath);
+        void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string pszDir);
+        void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszArgs, int cchMaxPath);
+        void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string pszArgs);
+        void GetHotkey(out short pwHotkey);
+        void SetHotkey(short wHotkey);
+        void GetShowCmd(out int piShowCmd);
+        void SetShowCmd(int iShowCmd);
+        void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszIconPath, int cchIconPath, out int piIcon);
+        void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string pszIconPath, int iIcon);
+        void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string pszPathRel, int dwReserved);
+        void Resolve(IntPtr hwnd, int fFlags);
+        void SetPath([MarshalAs(UnmanagedType.LPWStr)] string pszFile);
+    }
+
+    [ComImport]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    [Guid("0000010b-0000-0000-C000-000000000046")]
+    public interface IPersistFile {
+        void GetClassID(out Guid pClassID);
+        [PreserveSig] int IsDirty();
+        void Load([MarshalAs(UnmanagedType.LPWStr)] string pszFileName, uint dwMode);
+        void Save([MarshalAs(UnmanagedType.LPWStr)] string pszFileName, [MarshalAs(UnmanagedType.Bool)] bool fRemember);
+        void SaveCompleted([MarshalAs(UnmanagedType.LPWStr)] string pszFileName);
+        void GetCurFile([MarshalAs(UnmanagedType.LPWStr)] out string ppszFileName);
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    public struct PropertyKey {
+        public Guid fmtid;
+        public uint pid;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PropVariant {
+        public short vt;
+        public short wReserved1;
+        public short wReserved2;
+        public short wReserved3;
+        public IntPtr pointerValue;
+    }
+
+    [ComImport]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    [Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")]
+    public interface IPropertyStore {
+        uint GetCount();
+        void GetAt(uint iProp, out PropertyKey pkey);
+        void GetValue(ref PropertyKey key, out PropVariant pv);
+        void SetValue(ref PropertyKey key, ref PropVariant pv);
+        void Commit();
+    }
+
+    public static class Creator {
+        // Create .lnk and set AUMID in one COM session (avoids STG_E_ACCESSDENIED).
+        public static void CreateBrandedShortcut(
+            string shortcutPath,
+            string targetPath,
+            string arguments,
+            string workingDirectory,
+            string description,
+            string iconPath,
+            string appId
+        ) {
+            var link = (IShellLinkW)new CShellLink();
+            link.SetPath(targetPath);
+            link.SetArguments(arguments ?? "");
+            link.SetWorkingDirectory(workingDirectory ?? "");
+            link.SetDescription(description ?? "");
+            if (!string.IsNullOrEmpty(iconPath)) {
+                link.SetIconLocation(iconPath, 0);
+            }
+
+            var store = (IPropertyStore)link;
+            var pk = new PropertyKey {
+                fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"),
+                pid = 5
+            };
+            var pv = new PropVariant {
+                vt = 31,
+                pointerValue = Marshal.StringToCoTaskMemUni(appId)
+            };
+            try {
+                store.SetValue(ref pk, ref pv);
+                store.Commit();
+            } finally {
+                Marshal.FreeCoTaskMem(pv.pointerValue);
+            }
+
+            var file = (IPersistFile)link;
+            file.Save(shortcutPath, true);
+        }
+    }
+}
+"@
+}
+
+function Install-FireravenToastApp {
+    # Silent user-scope Start Menu shortcut so Action Center toasts can brand as Fireraven.
+    try {
+        Ensure-FireravenShortcutAumidType
+        $dir = Get-FireravenToastShortcutDir
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $lnkPath = Join-Path $dir $script:FireravenToastShortcutName
+
+        $psExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+        $icon = Find-FireravenToastIcon
+        [FireravenShortcutAumid.Creator]::CreateBrandedShortcut(
+            $lnkPath,
+            $psExe,
+            "-NoProfile -WindowStyle Hidden -Command exit",
+            (Get-UserHome),
+            "Fireraven FireGuard notifications",
+            $(if ($icon) { $icon } else { $null }),
+            $script:FireravenToastAumid
+        )
+        Write-Info "Registered toast app identity ($($script:FireravenToastAumid)) at $lnkPath"
+    } catch {
+        Write-Warn "Could not register Fireraven toast Start Menu shortcut: $_"
+    }
+}
 
 function Test-CommandWorks {
     param(
@@ -184,8 +459,6 @@ function Get-LocalRepoRoot {
 }
 
 function Get-MergeHooksScriptsDir {
-    param([string]$RawBase)
-
     $repoRoot = Get-LocalRepoRoot
     if ($repoRoot) {
         $scriptsDir = Join-Path $repoRoot "scripts"
@@ -197,7 +470,7 @@ function Get-MergeHooksScriptsDir {
     $dir = Join-Path $env:TEMP "fireraven-agent-hooks-scripts"
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     foreach ($file in @("jsonc_modify.py", "merge_hooks_config.py")) {
-        Download-File -Url "$RawBase/scripts/$file" -Destination (Join-Path $dir $file)
+        Download-RepoFile -Path "scripts/$file" -Destination (Join-Path $dir $file)
     }
     return $dir
 }
@@ -205,11 +478,10 @@ function Get-MergeHooksScriptsDir {
 function Invoke-MergeHooksConfig {
     param(
         [hashtable]$PythonCommand,
-        [string]$RawBase,
         [string[]]$Arguments
     )
 
-    $scriptsDir = Get-MergeHooksScriptsDir -RawBase $RawBase
+    $scriptsDir = Get-MergeHooksScriptsDir
     $scriptPath = Join-Path $scriptsDir "merge_hooks_config.py"
     $command = @($PythonCommand.FilePath) + @($PythonCommand.Arguments) + @($scriptPath) + $Arguments
     & $command[0] $command[1..($command.Length - 1)]
@@ -225,12 +497,16 @@ function Copy-PackageTree {
     )
 
     New-Item -ItemType Directory -Force -Path $DestinationDir | Out-Null
-    foreach ($dir in @("core", "adapters")) {
+    foreach ($dir in @("core", "adapters", "assets")) {
+        $source = Join-Path $SourceRoot $dir
+        if (-not (Test-Path $source)) {
+            continue
+        }
         $dest = Join-Path $DestinationDir $dir
         if (Test-Path $dest) {
             Remove-Item -Recurse -Force $dest
         }
-        Copy-Item -Recurse -Force (Join-Path $SourceRoot $dir) $DestinationDir
+        Copy-Item -Recurse -Force $source $DestinationDir
     }
 
     foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "devin_guardrail.py", "github_copilot_guardrail.py", "run_github_copilot_guardrail.ps1", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
@@ -239,27 +515,35 @@ function Copy-PackageTree {
             Copy-Item -Force $source (Join-Path $DestinationDir $file)
         }
     }
+
+    $versionSource = Join-Path $SourceRoot "VERSION"
+    if (Test-Path $versionSource) {
+        Copy-Item -Force $versionSource (Join-Path $DestinationDir "VERSION")
+    }
 }
 
-function Download-File {
+function Download-RepoFile {
     param(
-        [string]$Url,
+        [string]$Path,
         [string]$Destination
     )
+    $url = Get-FileUrl -Path $Path
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Destination) | Out-Null
-    Write-Info "Downloading $Url"
-    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Destination
+    Write-Info "Downloading $Path"
+    $headers = @{}
+    if ($script:Channel -eq "gitlab_api") {
+        $headers["PRIVATE-TOKEN"] = $HooksToken
+    }
+    Invoke-WebRequest -UseBasicParsing -Uri $url -Headers $headers -OutFile $Destination
 }
 
 function Download-PackageTree {
-    param(
-        [string]$RawBase,
-        [string]$DestinationDir
-    )
+    param([string]$DestinationDir)
 
     New-Item -ItemType Directory -Force -Path $DestinationDir | Out-Null
 
     foreach ($path in @(
+        "VERSION",
         "core/__init__.py",
         "core/config.py",
         "core/session_store.py",
@@ -268,18 +552,22 @@ function Download-PackageTree {
         "core/guardrail.py",
         "core/human_override.py",
         "core/hook_io.py",
+        "core/unavailable_notice.py",
+        "core/secured_notice.py",
+        "core/update_check.py",
         "adapters/__init__.py",
         "adapters/windsurf.py",
         "adapters/cursor.py",
         "adapters/claude.py",
         "adapters/devin.py",
-        "adapters/github_copilot.py"
+        "adapters/github_copilot.py",
+        "assets/fireraven.ico"
     )) {
-        Download-File -Url "$RawBase/$path" -Destination (Join-Path $DestinationDir ($path -replace "/", "\"))
+        Download-RepoFile -Path $path -Destination (Join-Path $DestinationDir ($path -replace "/", "\"))
     }
 
     foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "devin_guardrail.py", "github_copilot_guardrail.py", "run_github_copilot_guardrail.ps1", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
-        Download-File -Url "$RawBase/hooks/$file" -Destination (Join-Path $DestinationDir $file)
+        Download-RepoFile -Path "hooks/$file" -Destination (Join-Path $DestinationDir $file)
     }
 }
 
@@ -293,8 +581,7 @@ function Install-PackageTree {
         return
     }
 
-    $rawBase = "https://raw.githubusercontent.com/$HooksRepo/refs/heads/$HooksRef"
-    Download-PackageTree -RawBase $rawBase -DestinationDir $DestinationDir
+    Download-PackageTree -DestinationDir $DestinationDir
 }
 
 function ConvertTo-Hashtable {
@@ -356,6 +643,7 @@ function Ensure-ConfigEnv {
     $exampleEnv = Join-Path $DestinationDir "config.example.env"
     if (Test-Path $configEnv) {
         Write-Info "Keeping existing config: $configEnv"
+        Ensure-HooksTokenInConfig -DestinationDir $DestinationDir
         return
     }
     if (-not (Test-Path $exampleEnv)) {
@@ -363,6 +651,7 @@ function Ensure-ConfigEnv {
     }
     Copy-Item -Force $exampleEnv $configEnv
     Write-Warn "Created $configEnv - add FIRERAVEN_GUARDRAILS_API_KEY and FIRERAVEN_PROJECT_ID"
+    Ensure-HooksTokenInConfig -DestinationDir $DestinationDir
 }
 
 function Remove-FireravenEntries {
@@ -394,16 +683,13 @@ function Add-HookEntry {
 }
 
 function Merge-WindsurfHooksJson {
-    param(
-        [hashtable]$PythonCommand,
-        [string]$RawBase
-    )
+    param([hashtable]$PythonCommand)
 
     $hooksJson = Join-Path (Get-WindsurfInstallDir) "hooks.json"
     $scriptPath = Join-Path (Get-WindsurfHooksDir) $WindsurfScript
     $events = ($WindsurfPreEvents + $WindsurfPostEvents) -join " "
 
-    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -RawBase $RawBase -Arguments @(
+    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -Arguments @(
         "merge-windsurf",
         "--path", $hooksJson,
         "--script-path", $scriptPath,
@@ -415,13 +701,10 @@ function Merge-WindsurfHooksJson {
 }
 
 function Merge-CursorHooksJson {
-    param(
-        [hashtable]$PythonCommand,
-        [string]$RawBase
-    )
+    param([hashtable]$PythonCommand)
 
     $hooksJson = Join-Path (Get-CursorInstallDir) "hooks.json"
-    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -RawBase $RawBase -Arguments @(
+    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -Arguments @(
         "merge-cursor",
         "--path", $hooksJson,
         "--script-path", (Join-Path (Get-CursorHooksDir) $CursorScript),
@@ -433,15 +716,12 @@ function Merge-CursorHooksJson {
 }
 
 function Merge-ClaudeSettingsJson {
-    param(
-        [hashtable]$PythonCommand,
-        [string]$RawBase
-    )
+    param([hashtable]$PythonCommand)
 
     $settingsJson = Join-Path (Get-ClaudeInstallDir) "settings.json"
     $scriptPath = Join-Path (Get-ClaudeHooksDir) $ClaudeScript
 
-    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -RawBase $RawBase -Arguments @(
+    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -Arguments @(
         "merge-claude",
         "--path", $settingsJson,
         "--script-path", $scriptPath,
@@ -451,15 +731,12 @@ function Merge-ClaudeSettingsJson {
 }
 
 function Merge-DevinConfigJson {
-    param(
-        [hashtable]$PythonCommand,
-        [string]$RawBase
-    )
+    param([hashtable]$PythonCommand)
 
     $configJson = Join-Path (Get-DevinInstallDir) "config.json"
     $scriptPath = Join-Path (Get-DevinHooksDir) $DevinScript
 
-    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -RawBase $RawBase -Arguments @(
+    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -Arguments @(
         "merge-devin",
         "--path", $configJson,
         "--script-path", $scriptPath,
@@ -471,7 +748,6 @@ function Merge-DevinConfigJson {
 function Merge-GitHubCopilotHooksJson {
     param(
         [hashtable]$PythonCommand,
-        [string]$RawBase,
         [ValidateSet("user", "project")]
         [string]$Target = "user"
     )
@@ -488,7 +764,7 @@ function Merge-GitHubCopilotHooksJson {
     $bashCommand = "python3 $scriptPath"
     $powershellCommand = New-PowerShellPythonCommand -PythonCommand $PythonCommand -ScriptPath $scriptPath
 
-    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -RawBase $RawBase -Arguments @(
+    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -Arguments @(
         "merge-github-copilot",
         "--path", $hooksJson,
         "--script-path", $scriptPath,
@@ -504,55 +780,59 @@ function Merge-GitHubCopilotHooksJson {
 function Install-Windsurf {
     param(
         [hashtable]$PythonCommand,
-        [string]$RawBase
+        [string]$MetaAgents
     )
     $destination = Get-WindsurfHooksDir
     Write-Info "Installing Devin/Windsurf hooks to $destination"
     Install-PackageTree -DestinationDir $destination
+    Write-InstallMeta -DestinationDir $destination -Agents $MetaAgents
     Ensure-ConfigEnv -DestinationDir $destination
-    Merge-WindsurfHooksJson -PythonCommand $PythonCommand -RawBase $RawBase
+    Merge-WindsurfHooksJson -PythonCommand $PythonCommand
 }
 
 function Install-Cursor {
     param(
         [hashtable]$PythonCommand,
-        [string]$RawBase
+        [string]$MetaAgents
     )
     $destination = Get-CursorHooksDir
     Write-Info "Installing Cursor hooks to $destination"
     Install-PackageTree -DestinationDir $destination
+    Write-InstallMeta -DestinationDir $destination -Agents $MetaAgents
     Ensure-ConfigEnv -DestinationDir $destination
-    Merge-CursorHooksJson -PythonCommand $PythonCommand -RawBase $RawBase
+    Merge-CursorHooksJson -PythonCommand $PythonCommand
 }
 
 function Install-Claude {
     param(
         [hashtable]$PythonCommand,
-        [string]$RawBase
+        [string]$MetaAgents
     )
     $destination = Get-ClaudeHooksDir
     Write-Info "Installing Claude Code hooks to $destination"
     Install-PackageTree -DestinationDir $destination
+    Write-InstallMeta -DestinationDir $destination -Agents $MetaAgents
     Ensure-ConfigEnv -DestinationDir $destination
-    Merge-ClaudeSettingsJson -PythonCommand $PythonCommand -RawBase $RawBase
+    Merge-ClaudeSettingsJson -PythonCommand $PythonCommand
 }
 
 function Install-Devin {
     param(
         [hashtable]$PythonCommand,
-        [string]$RawBase
+        [string]$MetaAgents
     )
     $destination = Get-DevinHooksDir
     Write-Info "Installing Devin Local hooks to $destination"
     Install-PackageTree -DestinationDir $destination
+    Write-InstallMeta -DestinationDir $destination -Agents $MetaAgents
     Ensure-ConfigEnv -DestinationDir $destination
-    Merge-DevinConfigJson -PythonCommand $PythonCommand -RawBase $RawBase
+    Merge-DevinConfigJson -PythonCommand $PythonCommand
 }
 
 function Install-GitHubCopilot {
     param(
         [hashtable]$PythonCommand,
-        [string]$RawBase,
+        [string]$MetaAgents,
         [ValidateSet("user", "project")]
         [string]$Target = "user"
     )
@@ -567,39 +847,48 @@ function Install-GitHubCopilot {
     }
 
     Install-PackageTree -DestinationDir $destination
+    Write-InstallMeta -DestinationDir $destination -Agents $MetaAgents
     Ensure-ConfigEnv -DestinationDir $destination
-    Merge-GitHubCopilotHooksJson -PythonCommand $PythonCommand -RawBase $RawBase -Target $Target
+    Merge-GitHubCopilotHooksJson -PythonCommand $PythonCommand -Target $Target
 
     if ($Target -eq "project") {
         Write-Warn "Commit .github/hooks/fireraven-fireguard.json and .github/hooks/fireraven/ to your default branch for Copilot cloud agent"
     }
 }
 
+Resolve-Channel
 $pythonCommand = Get-PythonCommand
 $pythonText = (@($pythonCommand.FilePath) + @($pythonCommand.Arguments)) -join " "
-$rawBase = "https://raw.githubusercontent.com/$HooksRepo/refs/heads/$HooksRef"
 Write-Info "Using Python command: $pythonText"
 Write-Info "Installing Fireraven agent hooks ($Agent)"
+if ($script:Channel -eq "gitlab_api") {
+    Write-Info "Channel: gitlab_api project=$($script:GitlabProject) ref=$($script:GitlabRef)"
+}
+else {
+    Write-Info "Channel: github raw_base=$($script:RawBase)"
+}
 
 switch ($Agent) {
     "all" {
-        Install-Windsurf -PythonCommand $pythonCommand -RawBase $rawBase
-        Install-Cursor -PythonCommand $pythonCommand -RawBase $rawBase
-        Install-Claude -PythonCommand $pythonCommand -RawBase $rawBase
-        Install-Devin -PythonCommand $pythonCommand -RawBase $rawBase
-        Install-GitHubCopilot -PythonCommand $pythonCommand -RawBase $rawBase -Target user
+        Install-Windsurf -PythonCommand $pythonCommand -MetaAgents "all"
+        Install-Cursor -PythonCommand $pythonCommand -MetaAgents "all"
+        Install-Claude -PythonCommand $pythonCommand -MetaAgents "all"
+        Install-Devin -PythonCommand $pythonCommand -MetaAgents "all"
+        Install-GitHubCopilot -PythonCommand $pythonCommand -MetaAgents "all" -Target user
         Write-Info "Copilot Studio uses connector topics in adapters/copilot/ (see README)"
     }
-    "windsurf" { Install-Windsurf -PythonCommand $pythonCommand -RawBase $rawBase }
-    "cursor" { Install-Cursor -PythonCommand $pythonCommand -RawBase $rawBase }
-    "claude" { Install-Claude -PythonCommand $pythonCommand -RawBase $rawBase }
-    "devin" { Install-Devin -PythonCommand $pythonCommand -RawBase $rawBase }
+    "windsurf" { Install-Windsurf -PythonCommand $pythonCommand -MetaAgents "windsurf" }
+    "cursor" { Install-Cursor -PythonCommand $pythonCommand -MetaAgents "cursor" }
+    "claude" { Install-Claude -PythonCommand $pythonCommand -MetaAgents "claude" }
+    "devin" { Install-Devin -PythonCommand $pythonCommand -MetaAgents "devin" }
     "github-copilot" {
         $target = if ($Project) { "project" } else { "user" }
-        Install-GitHubCopilot -PythonCommand $pythonCommand -RawBase $rawBase -Target $target
+        Install-GitHubCopilot -PythonCommand $pythonCommand -MetaAgents "github-copilot" -Target $target
     }
     "copilot" { Write-Info "Copilot Studio uses connector topics in adapters/copilot/ (see README)" }
 }
+
+Install-FireravenToastApp
 
 Write-Host ""
 Write-Warn "Edit config.env in each installed hooks directory with FIRERAVEN_* credentials"

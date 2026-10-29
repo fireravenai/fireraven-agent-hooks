@@ -161,6 +161,8 @@ The script installs into `C:\Users\<employee>\.claude\`, writes `hooks\config.en
 
 ## Hook events by platform
 
+**PII:** When the Fireraven project has input PII enabled, hooks enforce it only on **typed user prompts** (`beforeSubmitPrompt`, `pre_user_prompt`, `UserPromptSubmit`, `userPromptSubmitted`). Tool / shell / MCP / file / subagent hooks still run security and policy checks but ignore PII-only failures (so reading a file that happens to contain a name does not freeze the agent). Agent hosts cannot rewrite prompts; a PII hit on a user prompt is a hard deny with a masked-text suggestion when FireGuard returns one. When policies/security and PII both trigger on a user prompt, the deny message includes both (policy/security first, then PII).
+
 ### Windsurf / Cascade
 
 **Input (blocking):** `pre_user_prompt`, `pre_run_command`, `pre_mcp_tool_use`, `pre_write_code`, `pre_read_code`
@@ -187,7 +189,7 @@ Devin Local is the local agent in Devin Desktop (Cascade’s successor), not clo
 
 **Output (audit only):** `afterFileEdit` (written hunks; cannot undo)
 
-Denies via JSON rather than exit codes. `beforeSubmitPrompt` uses `{"continue": false}`; other Cursor events use `{"permission": "deny"}`.
+Denies via JSON rather than exit codes. `beforeSubmitPrompt` uses `{"continue": false}`; other Cursor events use `{"permission": "deny"}`. On the first successful FireGuard pass for a conversation, `beforeSubmitPrompt` may include `user_message: "Conversation secured by Fireraven"` and shows an OS notice once per conversation. Linux toasts use `assets/fireraven.ico` when installed; Windows shows a best-effort Action Center corner toast attributed to **Fireraven** (Start Menu AUMID registered by the installer).
 
 **Human override:** On FireGuard policy/security violations for tool/shell/MCP/read/subagent gates, the hook shows a blocking OS confirmation dialog (yad/zenity/kdialog on Linux, osascript on macOS, MessageBox on Windows). Allow continues once for that action; Deny, window close, Esc, dialog timeout, or no-display keeps the deny. Local sensitive-path blocks (`.env`, keys, etc.) are **not** overridable. Prompt blocks stay hard deny (edit the prompt). Cursor’s native `permission: "ask"` is not used — it is not reliably enforced today. Fireraven registers a **600s** hook `timeout` (and `failClosed` on key Cursor events) so the host does not kill the dialog early.
 
@@ -325,6 +327,7 @@ Like Claude Code, Devin Local runs hook commands through a POSIX-style shell tha
 - If Claude Code hooks do not run, confirm `%USERPROFILE%\.claude\settings.json` uses direct `py -3 C:/.../claude_guardrail.py` commands (no `powershell` wrapper) for both `PreToolUse` and `UserPromptSubmit`.
 - If credentials fail, edit the `config.env` file under the installed agent's `hooks` directory and restart the IDE.
 - If install fails with a JSONC parse error on `hooks.json`, fix syntax errors in the file (comments alone are supported). The installer preserves `//` comments and non-Fireraven hook entries.
+- **OS notice (secured / unavailable) not showing:** On Windows, Fireraven shows a best-effort Action Center corner toast (WinRT `ToastGeneric`) branded via a silent Start Menu shortcut (`Fireraven.FireGuard` AppUserModelID created by `install.ps1`; removed by `uninstall.ps1`). Reinstall hooks after upgrade. If it does not appear, turn off **Do not disturb** (Win11) / **Focus assist** (Win10) and allow notifications for **Fireraven**. If the banner still says Windows PowerShell, re-run `install.ps1`. Notice is best-effort; Cursor **Output → Hooks** / `user_message` still confirm FireGuard ran (including `Conversation secured by Fireraven`).
 
 ## Post-install
 
@@ -392,6 +395,7 @@ Restart your IDE(s) after editing `config.env`.
 |----------|---------|-------------|
 | `FIRERAVEN_HOOKS_REPO` | `fireravenai/fireraven-agent-hooks` | GitHub repo |
 | `FIRERAVEN_HOOKS_REF` | `main` | Branch or tag |
+| `FIRERAVEN_HOOKS_RAW_BASE` | (derived from repo/ref) | Opaque path-join base for public hosts |
 | `FIRERAVEN_AGENT` | `windsurf` | Agent for install (`windsurf`, `cursor`, `claude`, `devin`, `github-copilot`, `copilot`, `all`) |
 | `FIRERAVEN_INSTALL_DIR` | `~/.codeium/windsurf` | Windsurf/Cascade install dir |
 | `FIRERAVEN_CURSOR_INSTALL_DIR` | `~/.cursor` | Cursor install dir |
@@ -400,14 +404,39 @@ Restart your IDE(s) after editing `config.env`.
 | `FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR` | `~/.copilot` | GitHub Copilot CLI install dir |
 | `FIRERAVEN_PROJECT_INSTALL` | `0` | Set to `1` or pass `--project` for cloud agent project install |
 
-Hook runtime settings (`FIRERAVEN_GUARDRAILS_API_KEY`, `FIRERAVEN_EXECUTION_MODE`, `FIRERAVEN_FAIL_MODE`, and so on) belong in each agent's `hooks/config.env` file, not in the shell environment. See [Post-install](#post-install).
+Hook runtime settings (`FIRERAVEN_GUARDRAILS_API_KEY`, `FIRERAVEN_EXECUTION_MODE`, `FIRERAVEN_FAIL_MODE`, and so on) belong in each agent's `hooks/config.env` file, not only in the shell environment. See [Post-install](#post-install).
+
+## Updates
+
+All supported coding agents share the same update path via `hooks/_bootstrap.py` (Cursor, Claude Code, Windsurf/Cascade, Devin Local, GitHub Copilot).
+
+On hook runs, Fireraven compares the local `VERSION` file to the channel remote `VERSION` (GitHub path-join or GitLab API + token):
+
+1. OS toast when a newer version is available
+2. Dialog: **Allow** (re-run install for the agents recorded in `install_meta.json`) or **Later** (snooze that remote version)
+3. Soft-fail — update errors never block the agent hook
+
+| Channel | Default check interval |
+|---------|------------------------|
+| GitHub (default) | 6 hours |
+| GitLab API (`channel=gitlab_api`) | 5 minutes |
+
+Optional overrides in `config.env` (or process env):
+
+| Variable | Description |
+|----------|-------------|
+| `FIRERAVEN_UPDATE_CHECK=0` | Disable automatic update checks |
+| `FIRERAVEN_UPDATE_CHECK_INTERVAL_SEC` | Override interval (seconds) for either channel |
+| `FIRERAVEN_HOOKS_TOKEN` | Required for GitLab update fetch / Apply |
+
+Bump the repo-root `VERSION` (semver) on the branch you publish for that channel. GitHub and GitLab stay independent — a GitLab-installed machine does not pull GitHub `main` unless that was its install channel.
 
 ## Local development
 
 ```bash
 FIRERAVEN_INSTALL_DIR=/tmp/fg-test ./scripts/install-local.sh
 FIRERAVEN_AGENT=all FIRERAVEN_INSTALL_DIR=/tmp/fg-test ./scripts/install-local.sh
-uv run python -m unittest tests.test_merge_hooks_config -v
+uv run python -m unittest tests.test_merge_hooks_config tests.test_update_check -v
 ```
 
 ## Uninstall
@@ -424,12 +453,6 @@ On Windows:
 powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -Agent all
 powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -Agent cursor
 ```
-
-## Publishing
-
-1. Push to `fireravenai/fireraven-agent-hooks` on `main`
-2. Tag `v1.0.0` after verifying install
-3. Cross-link from [Fireraven docs](https://doc.fireraven.ai/)
 
 ## Documentation
 

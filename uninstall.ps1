@@ -72,6 +72,28 @@ function Get-GitHubCopilotInstallDir {
 function Get-GitHubCopilotHooksJson { Join-Path (Get-GitHubCopilotInstallDir) "hooks\fireraven-fireguard.json" }
 function Get-GitHubCopilotProjectHooksJson { Join-Path (Get-Location) ".github\hooks\fireraven-fireguard.json" }
 
+function Get-FireravenToastShortcutDir {
+    $appData = if ($env:APPDATA) { $env:APPDATA } else { Join-Path (Get-UserHome) "AppData\Roaming" }
+    return (Join-Path $appData "Microsoft\Windows\Start Menu\Programs\Fireraven")
+}
+
+function Uninstall-FireravenToastApp {
+    try {
+        $dir = Get-FireravenToastShortcutDir
+        $lnkPath = Join-Path $dir "Fireraven.lnk"
+        if (Test-Path -LiteralPath $lnkPath) {
+            Remove-Item -LiteralPath $lnkPath -Force
+            Write-Info "Removed toast shortcut $lnkPath"
+        }
+        if ((Test-Path -LiteralPath $dir) -and -not (Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) {
+            Remove-Item -LiteralPath $dir -Force
+            Write-Info "Removed toast Start Menu folder $dir"
+        }
+    } catch {
+        Write-Warn "Could not remove Fireraven toast Start Menu shortcut: $_"
+    }
+}
+
 function Scrub-GitHubCopilotHooks {
     param(
         [hashtable]$PythonCommand,
@@ -252,6 +274,8 @@ switch ($Agent) {
         Write-Info "Copilot Studio uses connector topics in adapters/copilot/ (see README)"
     }
 }
+
+Uninstall-FireravenToastApp
 
 Write-Warn "config.env files were not removed (may contain secrets)"
 Write-Info "Restart your IDE(s) to apply changes"

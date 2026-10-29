@@ -10,6 +10,7 @@ from core.fireraven_client import (
     check_output_guardrail,
     classify_api_error,
     ensure_conversation,
+    evaluate_input_result,
     violation_message,
 )
 from core.session_store import append_history, get_messages_history, load, update
@@ -78,7 +79,13 @@ def _settings() -> dict[str, Any]:
     return settings
 
 
-def run_input_check(session_id: str, text: str, label: str) -> dict:
+def run_input_check(
+    session_id: str,
+    text: str,
+    label: str,
+    *,
+    enforce_pii: bool = False,
+) -> dict:
     if text.startswith("__LOCAL_BLOCK__:"):
         raise GuardrailError(text.split(":", 1)[1], overridable=False)
 
@@ -113,9 +120,7 @@ def run_input_check(session_id: str, text: str, label: str) -> dict:
     )
     append_history(session_id, "user", text)
 
-    if result.get("is_safe") is not True:
-        raise GuardrailError(violation_message(result))
-
+    evaluate_input_result(result, enforce_pii=enforce_pii)
     return result
 
 

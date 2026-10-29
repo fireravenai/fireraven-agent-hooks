@@ -144,3 +144,48 @@ def violation_message(result: dict, default: str = "Blocked by Fireraven FireGua
             "The following policies were triggered:\n" + "\n".join(bullets)
         )
     return "\n\n".join(parts)
+
+
+def _security_or_policies_unsafe(result: dict) -> bool:
+    security = result.get("security_guardrail_results") or {}
+    if security.get("is_safe") is False:
+        return True
+    policies = (result.get("policies_guardrail_results") or {}).get("policies") or []
+    return any(policy.get("is_safe") is False for policy in policies)
+
+
+def _pii_unsafe(result: dict) -> bool:
+    pii = result.get("pii_guardrail_results") or {}
+    return pii.get("is_safe") is False
+
+
+def pii_violation_message(result: dict) -> str:
+    """User-facing PII deny text, including masked suggestion when available."""
+    pii = result.get("pii_guardrail_results") or {}
+    masked = str(pii.get("masked_text") or "").strip()
+    overall = str(result.get("overall_response") or "").strip()
+    suggestion = masked or overall
+    header = "PII detected by Fireraven FireGuard. Remove personal data and resubmit."
+    if suggestion:
+        return f"{header}\n\nSuggested redacted prompt:\n{suggestion}"
+    return header
+
+
+def evaluate_input_result(result: dict, *, enforce_pii: bool) -> None:
+    """Raise GuardrailError when security/policies (or PII, if enforced) are unsafe.
+
+    Does not use top-level ``is_safe`` alone — PII-only failures are ignored when
+    ``enforce_pii`` is False so tool/MCP hooks stay usable with project PII on.
+    """
+    # Lazy import avoids circular dependency with core.guardrail.
+    from core.guardrail import GuardrailError
+
+    if _security_or_policies_unsafe(result):
+        message = violation_message(result)
+        if enforce_pii and _pii_unsafe(result):
+            message = f"{message}\n\n{pii_violation_message(result)}"
+            raise GuardrailError(message, overridable=False)
+        raise GuardrailError(message)
+
+    if enforce_pii and _pii_unsafe(result):
+        raise GuardrailError(pii_violation_message(result), overridable=False)

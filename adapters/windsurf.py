@@ -14,7 +14,12 @@ from core.guardrail import (
 )
 from core.hook_io import read_hook_input
 from core.human_override import OverrideDecision, resolve_override
-from core.serializers import WINDSURF_INPUT_EVENTS, WINDSURF_OUTPUT_AUDIT_EVENTS, serialize_windsurf
+from core.serializers import (
+    USER_PROMPT_EVENTS,
+    WINDSURF_INPUT_EVENTS,
+    WINDSURF_OUTPUT_AUDIT_EVENTS,
+    serialize_windsurf,
+)
 
 # Tool pre-hooks may show an OS Allow/Deny dialog. Prompts stay hard deny.
 WINDSURF_OVERRIDE_EVENTS = {
@@ -72,7 +77,12 @@ def main() -> None:
         sys.exit(2)
 
     try:
-        run_input_check(session_id, text, label="Windsurf Cascade")
+        run_input_check(
+            session_id,
+            text,
+            label="Windsurf Cascade",
+            enforce_pii=action in USER_PROMPT_EVENTS,
+        )
     except FireguardUnavailableError as exc:
         handle_service_failure(exc, fail_closed=settings["fail_closed"], session_id=session_id)
         return

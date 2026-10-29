@@ -96,6 +96,8 @@ echo '{"hook_event_name":"beforeSubmitPrompt","conversation_id":"test-001","prom
   | python3 cursor_guardrail.py
 ```
 
+On the first successful FireGuard pass for a conversation, stdout may include `"user_message":"Conversation secured by Fireraven"`.
+
 PowerShell:
 
 ```powershell
