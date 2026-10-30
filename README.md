@@ -259,16 +259,16 @@ The PowerShell installer writes:
 | File | Purpose |
 |------|---------|
 | `%USERPROFILE%\.cursor\hooks.json` | Cursor hook registration |
-| `%USERPROFILE%\.cursor\hooks\` | Fireraven hook scripts and config |
-| `%USERPROFILE%\.cursor\hooks\config.env` | Fireraven credentials |
+| `%USERPROFILE%\.cursor\hooks\fireraven\` | Fireraven hook scripts and config |
+| `%USERPROFILE%\.cursor\hooks\fireraven\config.env` | Fireraven credentials |
 
-The installer registers Cursor hooks as `py -3 hooks/cursor_guardrail.py`, which Cursor runs from `%USERPROFILE%\.cursor`. This lets Cursor pipe hook JSON directly to Python without a PowerShell stdin bridge. After editing `config.env`, restart Cursor or reload the window, then check **View > Output > Hooks** if a hook does not appear to run.
+The installer registers Cursor hooks as `py -3 hooks/fireraven/cursor_guardrail.py`, which Cursor runs from `%USERPROFILE%\.cursor`. This lets Cursor pipe hook JSON directly to Python without a PowerShell stdin bridge. After editing `config.env`, restart Cursor or reload the window, then check **View > Output > Hooks** if a hook does not appear to run.
 
 If the Python launcher is not available in Cursor's hook environment, use the installed fallback wrapper in `%USERPROFILE%\.cursor\hooks.json`:
 
 ```json
 {
-  "command": "powershell -NoProfile -ExecutionPolicy Bypass -File hooks/run_cursor_guardrail.ps1"
+  "command": "powershell -NoProfile -ExecutionPolicy Bypass -File hooks/fireraven/run_cursor_guardrail.ps1"
 }
 ```
 
@@ -279,8 +279,8 @@ Devin Desktop uses the Windsurf/Cascade hook configuration format. The PowerShel
 | File | Purpose |
 |------|---------|
 | `%USERPROFILE%\.codeium\windsurf\hooks.json` | Devin/Windsurf hook registration |
-| `%USERPROFILE%\.codeium\windsurf\hooks\` | Fireraven hook scripts and config |
-| `%USERPROFILE%\.codeium\windsurf\hooks\config.env` | Fireraven credentials |
+| `%USERPROFILE%\.codeium\windsurf\hooks\fireraven\` | Fireraven hook scripts and config |
+| `%USERPROFILE%\.codeium\windsurf\hooks\fireraven\config.env` | Fireraven credentials |
 
 The installer uses Cascade's Windows-specific `powershell` hook field, while keeping the hook registration in the normal Devin/Windsurf user-level config file. The adapter still follows Cascade's exit-code blocking behavior. Restart Devin Desktop or Windsurf after editing `config.env`.
 
@@ -291,16 +291,16 @@ The PowerShell installer writes:
 | File | Purpose |
 |------|---------|
 | `%USERPROFILE%\.claude\settings.json` | Claude Code hook registration |
-| `%USERPROFILE%\.claude\hooks\` | Fireraven hook scripts and config |
-| `%USERPROFILE%\.claude\hooks\config.env` | Fireraven credentials |
+| `%USERPROFILE%\.claude\hooks\fireraven\` | Fireraven hook scripts and config |
+| `%USERPROFILE%\.claude\hooks\fireraven\config.env` | Fireraven credentials |
 
-Claude Code runs hook commands through a POSIX shell (Git Bash), not PowerShell. The installer registers hooks as a direct `py -3` call with a forward-slash absolute path to `claude_guardrail.py` — for example `py -3 C:/Users/you/.claude/hooks/claude_guardrail.py`. Do **not** wrap hooks in PowerShell with `$input`; Git Bash expands `$input` to empty, PowerShell fails to parse the pipe, and Claude Code silently allows tools through unguarded.
+Claude Code runs hook commands through a POSIX shell (Git Bash), not PowerShell. The installer registers hooks as a direct `py -3` call with a forward-slash absolute path to `claude_guardrail.py` — for example `py -3 C:/Users/you/.claude/hooks/fireraven/claude_guardrail.py`. Do **not** wrap hooks in PowerShell with `$input`; Git Bash expands `$input` to empty, PowerShell fails to parse the pipe, and Claude Code silently allows tools through unguarded.
 
 Piping a PowerShell string into Python can add a UTF-8 BOM and break JSON parsing; the direct `py -3` command avoids that because stdin arrives as clean UTF-8.
 
 **Verify after install:**
 
-1. Trigger a tool call in Claude Code — a session file should appear under `%USERPROFILE%\.claude\hooks\state\`.
+1. Trigger a tool call in Claude Code — a session file should appear under `%USERPROFILE%\.claude\hooks\fireraven\state\`.
 2. Submit a benign chat prompt — it should proceed normally.
 3. Submit a policy-violating prompt — Claude Code should block it with a `UserPromptSubmit` hook error before responding.
 4. Confirm a "Claude Code" conversation appears in the FireGuard dashboard (including prompt-only sessions with no tools).
@@ -312,20 +312,20 @@ The PowerShell installer writes:
 | File | Purpose |
 |------|---------|
 | `%APPDATA%\devin\config.json` | Devin Local hook registration |
-| `%APPDATA%\devin\hooks\` | Fireraven hook scripts and config |
-| `%APPDATA%\devin\hooks\config.env` | Fireraven credentials |
+| `%APPDATA%\devin\hooks\fireraven\` | Fireraven hook scripts and config |
+| `%APPDATA%\devin\hooks\fireraven\config.env` | Fireraven credentials |
 
-Like Claude Code, Devin Local runs hook commands through a POSIX-style shell that treats `\` as escapes. The installer registers hooks as `py -3` with a forward-slash absolute path — for example `py -3 C:/Users/you/AppData/Roaming/devin/hooks/devin_guardrail.py`. Re-run `install.ps1 -Agent devin` after upgrading so existing backslash commands are replaced.
+Like Claude Code, Devin Local runs hook commands through a POSIX-style shell that treats `\` as escapes. The installer registers hooks as `py -3` with a forward-slash absolute path — for example `py -3 C:/Users/you/AppData/Roaming/devin/hooks/fireraven/devin_guardrail.py`. Re-run `install.ps1 -Agent devin` after upgrading so existing backslash commands are replaced.
 
 ### Windows troubleshooting
 
 - If PowerShell blocks the script, run the local clone command with `-ExecutionPolicy Bypass`.
 - If Python is missing, install Python 3 and enable **Add python.exe to PATH**, or use the Python launcher so `py -3 --version` works.
-- If Cursor hooks do not run, open **View > Output > Hooks** and confirm the command is `py -3 hooks/cursor_guardrail.py`, or switch to the `run_cursor_guardrail.ps1` fallback above.
+- If Cursor hooks do not run, open **View > Output > Hooks** and confirm the command is `py -3 hooks/fireraven/cursor_guardrail.py`, or switch to the `run_cursor_guardrail.ps1` fallback above.
 - If Devin/Windsurf hooks do not run, confirm `%USERPROFILE%\.codeium\windsurf\hooks.json` contains a direct Python `powershell` field for each Fireraven hook event.
-- If Devin Local hooks fail with a glued path like `UsersjsAppDataRoamingdevinhooks...`, re-run `install.ps1 -Agent devin` and confirm `%APPDATA%\devin\config.json` uses `py -3 C:/.../devin_guardrail.py` (forward slashes, no `\`).
-- If Claude Code hooks do not run, confirm `%USERPROFILE%\.claude\settings.json` uses direct `py -3 C:/.../claude_guardrail.py` commands (no `powershell` wrapper) for both `PreToolUse` and `UserPromptSubmit`.
-- If credentials fail, edit the `config.env` file under the installed agent's `hooks` directory and restart the IDE.
+- If Devin Local hooks fail with a glued path like `UsersjsAppDataRoamingdevinhooks...`, re-run `install.ps1 -Agent devin` and confirm `%APPDATA%\devin\config.json` uses `py -3 C:/.../hooks/fireraven/devin_guardrail.py` (forward slashes, no `\`).
+- If Claude Code hooks do not run, confirm `%USERPROFILE%\.claude\settings.json` uses direct `py -3 C:/.../hooks/fireraven/claude_guardrail.py` commands (no `powershell` wrapper) for both `PreToolUse` and `UserPromptSubmit`.
+- If credentials fail, edit the `config.env` file under the installed agent's `hooks/fireraven` directory and restart the IDE.
 - If install fails with a JSONC parse error on `hooks.json`, fix syntax errors in the file (comments alone are supported). The installer preserves `//` comments and non-Fireraven hook entries.
 - **OS notice (secured / unavailable) not showing:** On Windows, Fireraven shows a best-effort Action Center corner toast (WinRT `ToastGeneric`) branded via a silent Start Menu shortcut (`Fireraven.FireGuard` AppUserModelID created by `install.ps1`; removed by `uninstall.ps1`). Reinstall hooks after upgrade. If it does not appear, turn off **Do not disturb** (Win11) / **Focus assist** (Win10) and allow notifications for **Fireraven**. If the banner still says Windows PowerShell, re-run `install.ps1`. Notice is best-effort; Cursor **Output → Hooks** / `user_message` still confirm FireGuard ran (including `Conversation secured by Fireraven`).
 
@@ -335,10 +335,10 @@ Edit `config.env` in each agent's hooks directory:
 
 | Agent | `config.env` path |
 |-------|-------------------|
-| Cursor | `~/.cursor/hooks/config.env` |
-| Windsurf / Cascade | `~/.codeium/windsurf/hooks/config.env` |
-| Devin Local | `~/.config/devin/hooks/config.env` (`%APPDATA%\devin\hooks\` on Windows) |
-| Claude Code | `~/.claude/hooks/config.env` |
+| Cursor | `~/.cursor/hooks/fireraven/config.env` |
+| Windsurf / Cascade | `~/.codeium/windsurf/hooks/fireraven/config.env` |
+| Devin Local | `~/.config/devin/hooks/fireraven/config.env` (`%APPDATA%\devin\hooks\fireraven\` on Windows) |
+| Claude Code | `~/.claude/hooks/fireraven/config.env` |
 | GitHub Copilot (CLI) | `~/.copilot/hooks/fireraven/config.env` |
 | GitHub Copilot (cloud agent) | `.github/hooks/fireraven/config.env` (gitignored) |
 
@@ -404,7 +404,7 @@ Restart your IDE(s) after editing `config.env`.
 | `FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR` | `~/.copilot` | GitHub Copilot CLI install dir |
 | `FIRERAVEN_PROJECT_INSTALL` | `0` | Set to `1` or pass `--project` for cloud agent project install |
 
-Hook runtime settings (`FIRERAVEN_GUARDRAILS_API_KEY`, `FIRERAVEN_EXECUTION_MODE`, `FIRERAVEN_FAIL_MODE`, and so on) belong in each agent's `hooks/config.env` file, not only in the shell environment. See [Post-install](#post-install).
+Hook runtime settings (`FIRERAVEN_GUARDRAILS_API_KEY`, `FIRERAVEN_EXECUTION_MODE`, `FIRERAVEN_FAIL_MODE`, and so on) belong in each agent's `hooks/fireraven/config.env` file, not only in the shell environment. See [Post-install](#post-install).
 
 ## Updates
 
@@ -447,12 +447,28 @@ uv run python -m unittest tests.test_merge_hooks_config tests.test_update_check 
 ./fg uninstall --agent windsurf
 ```
 
+Without a checkout:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fireravenai/fireraven-agent-hooks/refs/heads/main/uninstall.sh | sh -s -- --agent cursor
+```
+
+This removes Fireraven entries from the agent registration file. It does not delete `hooks/fireraven` or `config.env`.
+
 On Windows:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -Agent all
 powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -Agent cursor
 ```
+
+Without a checkout:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/fireravenai/fireraven-agent-hooks/refs/heads/main/uninstall.ps1))) -Agent cursor
+```
+
+This removes Fireraven entries from the agent registration file. It does not delete `hooks/fireraven` or `config.env`.
 
 ## Documentation
 

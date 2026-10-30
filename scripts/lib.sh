@@ -212,10 +212,10 @@ run_merge_hooks_config() {
     python3 "${scripts_dir}/merge_hooks_config.py" "$@"
 }
 
-windsurf_hooks_dir() { printf '%s/hooks' "$WINDSURF_INSTALL_DIR"; }
-cursor_hooks_dir() { printf '%s/hooks' "$CURSOR_INSTALL_DIR"; }
-claude_hooks_dir() { printf '%s/hooks' "$CLAUDE_INSTALL_DIR"; }
-devin_hooks_dir() { printf '%s/hooks' "$DEVIN_INSTALL_DIR"; }
+windsurf_hooks_dir() { printf '%s/hooks/fireraven' "$WINDSURF_INSTALL_DIR"; }
+cursor_hooks_dir() { printf '%s/hooks/fireraven' "$CURSOR_INSTALL_DIR"; }
+claude_hooks_dir() { printf '%s/hooks/fireraven' "$CLAUDE_INSTALL_DIR"; }
+devin_hooks_dir() { printf '%s/hooks/fireraven' "$DEVIN_INSTALL_DIR"; }
 github_copilot_hooks_dir() { printf '%s/hooks/fireraven' "$GITHUB_COPILOT_INSTALL_DIR"; }
 github_copilot_hooks_json() { printf '%s/hooks/fireraven-fireguard.json' "$GITHUB_COPILOT_INSTALL_DIR"; }
 github_copilot_project_hooks_dir() { printf '%s/.github/hooks/fireraven' "$(pwd)"; }

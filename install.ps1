@@ -80,10 +80,10 @@ function Get-GitHubCopilotInstallDir {
     return (Join-Path (Get-UserHome) ".copilot")
 }
 
-function Get-WindsurfHooksDir { Join-Path (Get-WindsurfInstallDir) "hooks" }
-function Get-CursorHooksDir { Join-Path (Get-CursorInstallDir) "hooks" }
-function Get-ClaudeHooksDir { Join-Path (Get-ClaudeInstallDir) "hooks" }
-function Get-DevinHooksDir { Join-Path (Get-DevinInstallDir) "hooks" }
+function Get-WindsurfHooksDir { Join-Path (Get-WindsurfInstallDir) "hooks\fireraven" }
+function Get-CursorHooksDir { Join-Path (Get-CursorInstallDir) "hooks\fireraven" }
+function Get-ClaudeHooksDir { Join-Path (Get-ClaudeInstallDir) "hooks\fireraven" }
+function Get-DevinHooksDir { Join-Path (Get-DevinInstallDir) "hooks\fireraven" }
 function Get-GitHubCopilotHooksDir { Join-Path (Get-GitHubCopilotInstallDir) "hooks\fireraven" }
 function Get-GitHubCopilotHooksJson { Join-Path (Get-GitHubCopilotInstallDir) "hooks\fireraven-fireguard.json" }
 function Get-GitHubCopilotProjectHooksDir { Join-Path (Get-Location) ".github\hooks\fireraven" }
@@ -148,6 +148,19 @@ function Get-FileUrl {
     return "$($script:RawBase.TrimEnd('/'))/$Path"
 }
 
+function Write-Utf8NoBom {
+    param(
+        [string]$Path,
+        [string]$Content
+    )
+    $parent = Split-Path -Parent $Path
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
+}
+
 function Write-InstallMeta {
     param(
         [string]$DestinationDir,
@@ -175,7 +188,7 @@ function Write-InstallMeta {
         }
     }
     $path = Join-Path $DestinationDir "install_meta.json"
-    ($meta | ConvertTo-Json -Depth 5) + "`n" | Set-Content -Encoding UTF8 -Path $path
+    Write-Utf8NoBom -Path $path -Content (($meta | ConvertTo-Json -Depth 5) + "`n")
 }
 
 function Ensure-HooksTokenInConfig {
@@ -183,9 +196,13 @@ function Ensure-HooksTokenInConfig {
     if (-not $HooksToken) { return }
     $configEnv = Join-Path $DestinationDir "config.env"
     if (-not (Test-Path $configEnv)) { return }
-    $text = Get-Content -Raw -Path $configEnv
+    $text = [System.IO.File]::ReadAllText($configEnv)
     if ($text -match '(?m)^FIRERAVEN_HOOKS_TOKEN=') { return }
-    Add-Content -Path $configEnv -Value "`nFIRERAVEN_HOOKS_TOKEN=$HooksToken`n" -Encoding UTF8
+    if ($text.Length -gt 0 -and -not $text.EndsWith("`n")) {
+        $text += "`n"
+    }
+    $text += "FIRERAVEN_HOOKS_TOKEN=$HooksToken`n"
+    Write-Utf8NoBom -Path $configEnv -Content $text
     Write-Info "Wrote FIRERAVEN_HOOKS_TOKEN into $configEnv for update checks"
 }
 
@@ -432,7 +449,7 @@ function New-CursorHookCommand {
 }
 
 function New-CursorDirectHookCommand {
-    return "py -3 hooks/cursor_guardrail.py"
+    return "py -3 hooks/fireraven/cursor_guardrail.py"
 }
 
 function New-DirectPyHookCommand {
@@ -632,8 +649,7 @@ function Write-JsonFile {
         [hashtable]$Data
     )
 
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
-    ($Data | ConvertTo-Json -Depth 20) + "`n" | Set-Content -Encoding UTF8 -Path $Path
+    Write-Utf8NoBom -Path $Path -Content (($Data | ConvertTo-Json -Depth 20) + "`n")
 }
 
 function Ensure-ConfigEnv {
@@ -868,24 +884,65 @@ else {
     Write-Info "Channel: github raw_base=$($script:RawBase)"
 }
 
-switch ($Agent) {
-    "all" {
-        Install-Windsurf -PythonCommand $pythonCommand -MetaAgents "all"
-        Install-Cursor -PythonCommand $pythonCommand -MetaAgents "all"
-        Install-Claude -PythonCommand $pythonCommand -MetaAgents "all"
-        Install-Devin -PythonCommand $pythonCommand -MetaAgents "all"
-        Install-GitHubCopilot -PythonCommand $pythonCommand -MetaAgents "all" -Target user
-        Write-Info "Copilot Studio uses connector topics in adapters/copilot/ (see README)"
+function Test-FireravenGuardrail {
+    param(
+        [string]$InstallDir,
+        [string]$ScriptName
+    )
+    $flat = Join-Path (Join-Path $InstallDir "hooks") $ScriptName
+    $nested = Join-Path (Join-Path $InstallDir "hooks\fireraven") $ScriptName
+    return (Test-Path -LiteralPath $flat) -or (Test-Path -LiteralPath $nested)
+}
+
+function Get-InstallAgents {
+    param([string]$Requested)
+    if ($Requested -ne "windsurf") {
+        return @($Requested)
     }
-    "windsurf" { Install-Windsurf -PythonCommand $pythonCommand -MetaAgents "windsurf" }
-    "cursor" { Install-Cursor -PythonCommand $pythonCommand -MetaAgents "cursor" }
-    "claude" { Install-Claude -PythonCommand $pythonCommand -MetaAgents "claude" }
-    "devin" { Install-Devin -PythonCommand $pythonCommand -MetaAgents "devin" }
-    "github-copilot" {
-        $target = if ($Project) { "project" } else { "user" }
-        Install-GitHubCopilot -PythonCommand $pythonCommand -MetaAgents "github-copilot" -Target $target
+    if (Test-FireravenGuardrail -InstallDir (Get-WindsurfInstallDir) -ScriptName $WindsurfScript) {
+        return @("windsurf")
     }
-    "copilot" { Write-Info "Copilot Studio uses connector topics in adapters/copilot/ (see README)" }
+    $found = @()
+    if (Test-FireravenGuardrail -InstallDir (Get-CursorInstallDir) -ScriptName $CursorScript) {
+        $found += "cursor"
+    }
+    if (Test-FireravenGuardrail -InstallDir (Get-ClaudeInstallDir) -ScriptName $ClaudeScript) {
+        $found += "claude"
+    }
+    if (Test-FireravenGuardrail -InstallDir (Get-DevinInstallDir) -ScriptName $DevinScript) {
+        $found += "devin"
+    }
+    if (Test-FireravenGuardrail -InstallDir (Get-GitHubCopilotInstallDir) -ScriptName $GitHubCopilotScript) {
+        $found += "github-copilot"
+    }
+    if ($found.Count -eq 0) {
+        return @("windsurf")
+    }
+    Write-Info "No Windsurf install found; installing existing agent(s): $($found -join ', ')"
+    return @($found)
+}
+
+$installAgents = @(Get-InstallAgents -Requested $Agent)
+foreach ($installAgent in $installAgents) {
+    switch ($installAgent) {
+        "all" {
+            Install-Windsurf -PythonCommand $pythonCommand -MetaAgents "all"
+            Install-Cursor -PythonCommand $pythonCommand -MetaAgents "all"
+            Install-Claude -PythonCommand $pythonCommand -MetaAgents "all"
+            Install-Devin -PythonCommand $pythonCommand -MetaAgents "all"
+            Install-GitHubCopilot -PythonCommand $pythonCommand -MetaAgents "all" -Target user
+            Write-Info "Copilot Studio uses connector topics in adapters/copilot/ (see README)"
+        }
+        "windsurf" { Install-Windsurf -PythonCommand $pythonCommand -MetaAgents "windsurf" }
+        "cursor" { Install-Cursor -PythonCommand $pythonCommand -MetaAgents "cursor" }
+        "claude" { Install-Claude -PythonCommand $pythonCommand -MetaAgents "claude" }
+        "devin" { Install-Devin -PythonCommand $pythonCommand -MetaAgents "devin" }
+        "github-copilot" {
+            $target = if ($Project -and $Agent -eq "github-copilot") { "project" } else { "user" }
+            Install-GitHubCopilot -PythonCommand $pythonCommand -MetaAgents "github-copilot" -Target $target
+        }
+        "copilot" { Write-Info "Copilot Studio uses connector topics in adapters/copilot/ (see README)" }
+    }
 }
 
 Install-FireravenToastApp

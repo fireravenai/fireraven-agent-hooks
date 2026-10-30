@@ -1,6 +1,6 @@
 # Fireraven Agent Hook Scripts
 
-Installed to each agent's hooks directory (e.g. `~/.codeium/windsurf/hooks/`).
+Installed to each agent's `hooks/fireraven` directory (e.g. `~/.codeium/windsurf/hooks/fireraven/`).
 
 ## Entry scripts
 
@@ -34,10 +34,10 @@ After install, edit `config.env` in the agent's hooks directory. Restart the IDE
 
 | Agent | `config.env` path |
 |-------|-------------------|
-| Cursor | `~/.cursor/hooks/config.env` |
-| Windsurf / Cascade | `~/.codeium/windsurf/hooks/config.env` |
-| Devin Local | `~/.config/devin/hooks/config.env` |
-| Claude Code | `~/.claude/hooks/config.env` |
+| Cursor | `~/.cursor/hooks/fireraven/config.env` |
+| Windsurf / Cascade | `~/.codeium/windsurf/hooks/fireraven/config.env` |
+| Devin Local | `~/.config/devin/hooks/fireraven/config.env` |
+| Claude Code | `~/.claude/hooks/fireraven/config.env` |
 | GitHub Copilot | `~/.copilot/hooks/fireraven/config.env` or `.github/hooks/fireraven/config.env` (project) |
 
 **Required:**
@@ -139,21 +139,21 @@ echo '{"session_id":"test-001","hook_event_name":"UserPromptSubmit","prompt":"he
 Fallback wrapper from `%USERPROFILE%\.cursor`:
 
 ```powershell
-'{"hook_event_name":"beforeSubmitPrompt","conversation_id":"test-001","prompt":"hello"}' | powershell -NoProfile -ExecutionPolicy Bypass -File hooks\run_cursor_guardrail.ps1
+'{"hook_event_name":"beforeSubmitPrompt","conversation_id":"test-001","prompt":"hello"}' | powershell -NoProfile -ExecutionPolicy Bypass -File hooks\fireraven\run_cursor_guardrail.ps1
 ```
 
 ## Windows runtime notes
 
-- Cursor on Windows should launch hooks with `py -3 hooks/cursor_guardrail.py` from `%USERPROFILE%\.cursor`. Use `powershell -NoProfile -ExecutionPolicy Bypass -File hooks/run_cursor_guardrail.ps1` only as a fallback if `py` is unavailable to Cursor.
+- Cursor on Windows should launch hooks with `py -3 hooks/fireraven/cursor_guardrail.py` from `%USERPROFILE%\.cursor`. Use `powershell -NoProfile -ExecutionPolicy Bypass -File hooks/fireraven/run_cursor_guardrail.ps1` only as a fallback if `py` is unavailable to Cursor.
 - Windsurf/Cascade on Windows should use Cascade's `powershell` hook field with a direct Python invocation, not only the Unix `command` field.
-- Devin Local on Windows uses `%APPDATA%\devin\config.json` and `%APPDATA%\devin\hooks\`.
-- The Windows user-level hook directories are `%USERPROFILE%\.cursor\hooks\` for Cursor and `%USERPROFILE%\.codeium\windsurf\hooks\` for Windsurf/Cascade.
+- Devin Local on Windows uses `%APPDATA%\devin\config.json` and `%APPDATA%\devin\hooks\fireraven\`.
+- The Windows user-level hook directories are `%USERPROFILE%\.cursor\hooks\fireraven\` for Cursor and `%USERPROFILE%\.codeium\windsurf\hooks\fireraven\` for Windsurf/Cascade.
 - Restart the IDE after changing `hooks.json` or `config.env`.
 
 ## Layout after install
 
 ```
-~/.codeium/windsurf/hooks/
+~/.codeium/windsurf/hooks/fireraven/
 ├── core/                  # shared API client, session store
 ├── adapters/              # per-IDE dispatch logic
 ├── windsurf_guardrail.py  # entry script
@@ -165,7 +165,7 @@ Fallback wrapper from `%USERPROFILE%\.cursor`:
 On Windows, the same package layout is installed under:
 
 ```text
-%USERPROFILE%\.codeium\windsurf\hooks\
-%USERPROFILE%\.cursor\hooks\
-%APPDATA%\devin\hooks\
+%USERPROFILE%\.codeium\windsurf\hooks\fireraven\
+%USERPROFILE%\.cursor\hooks\fireraven\
+%APPDATA%\devin\hooks\fireraven\
 ```

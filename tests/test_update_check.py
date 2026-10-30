@@ -243,6 +243,29 @@ class MaybePromptUpdateTests(unittest.TestCase):
         state = json.loads((self.root / ".update_state.json").read_text(encoding="utf-8"))
         self.assertEqual(state.get("snoozed_version"), "0.2.0")
 
+    def test_bom_meta_allow_uses_recorded_agent(self) -> None:
+        payload = json.dumps(
+            {
+                "agents": "cursor",
+                "channel": "github",
+                "raw_base": "https://example.invalid/raw",
+                "repo": "o/r",
+                "ref": "main",
+            }
+        )
+        (self.root / "install_meta.json").write_bytes(b"\xef\xbb\xbf" + payload.encode("utf-8"))
+        with mock.patch.object(update_check, "_fetch_remote_version", return_value="0.2.0"):
+            with mock.patch.object(update_check, "show_unavailable_toast"):
+                with mock.patch.object(
+                    update_check, "request_update_dialog", return_value="allow"
+                ):
+                    with mock.patch.object(
+                        update_check, "_apply_update", return_value=True
+                    ) as apply:
+                        update_check.maybe_prompt_update()
+                        apply.assert_called_once()
+                        self.assertEqual(apply.call_args.args[1], "cursor")
+
     def test_allow_applies_with_channel(self) -> None:
         with mock.patch.object(update_check, "_fetch_remote_version", return_value="0.2.0"):
             with mock.patch.object(update_check, "show_unavailable_toast") as toast:
