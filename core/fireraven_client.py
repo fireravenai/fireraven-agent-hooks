@@ -171,11 +171,18 @@ def pii_violation_message(result: dict) -> str:
     return header
 
 
+def response_allows_override(result: dict) -> bool:
+    """True only when the project told this response that override is allowed."""
+    return result.get("override") is True
+
+
 def evaluate_input_result(result: dict, *, enforce_pii: bool) -> None:
     """Raise GuardrailError when security/policies (or PII, if enforced) are unsafe.
 
     Does not use top-level ``is_safe`` alone — PII-only failures are ignored when
     ``enforce_pii`` is False so tool/MCP hooks stay usable with project PII on.
+    Policy and security blocks are overridable only when ``override`` is true.
+    PII-only and combined policy/security+PII blocks stay hard deny.
     """
     # Lazy import avoids circular dependency with core.guardrail.
     from core.guardrail import GuardrailError
@@ -185,7 +192,7 @@ def evaluate_input_result(result: dict, *, enforce_pii: bool) -> None:
         if enforce_pii and _pii_unsafe(result):
             message = f"{message}\n\n{pii_violation_message(result)}"
             raise GuardrailError(message, overridable=False)
-        raise GuardrailError(message)
+        raise GuardrailError(message, overridable=response_allows_override(result))
 
     if enforce_pii and _pii_unsafe(result):
         raise GuardrailError(pii_violation_message(result), overridable=False)

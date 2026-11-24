@@ -13,6 +13,7 @@ from core.guardrail import (
 )
 from core.hook_io import read_hook_input
 from core.human_override import OverrideDecision, resolve_override
+from core.secured_notice import emit_secured_notice
 from core.serializers import (
     GITHUB_COPILOT_INPUT_EVENTS,
     GITHUB_COPILOT_OUTPUT_AUDIT_EVENTS,
@@ -65,6 +66,33 @@ def _fail_closed(message: str) -> None:
     sys.exit(1)
 
 
+def _block_prompt(message: str) -> None:
+    """VS Code Copilot Chat blocks UserPromptSubmit on this stdout shape."""
+    print(json.dumps({"decision": "block", "reason": message}))
+    sys.exit(0)
+
+
+def _allow_prompt(message: str | None = None) -> None:
+    """Show a once-per-session notice in Copilot Chat. Empty stdout allows quietly."""
+    if message:
+        print(json.dumps({"systemMessage": message}))
+    sys.exit(0)
+
+
+def _fail_closed_input(hook_event: str, message: str) -> None:
+    if hook_event == "userPromptSubmitted":
+        _block_prompt(message)
+    if hook_event == "preToolUse":
+        _deny(message)
+    _fail_closed(message)
+
+
+def _allow_input(hook_event: str, message: str | None = None) -> None:
+    if hook_event == "userPromptSubmitted":
+        _allow_prompt(message)
+    _allow()
+
+
 def main() -> None:
     try:
         hook_input = read_hook_input()
@@ -99,11 +127,9 @@ def main() -> None:
         fail_closed = settings["fail_closed"]
     except ValueError as exc:
         if fail_closed_from_config(config):
-            if hook_event == "preToolUse":
-                _deny(f"Fireraven guardrail hook: {exc}")
-            _fail_closed(f"Fireraven guardrail hook: {exc}")
-        emit_unavailable_notice(session_id, reason="not_configured")
-        _allow()
+            _fail_closed_input(hook_event, f"Fireraven guardrail hook: {exc}")
+        notice = emit_unavailable_notice(session_id, reason="not_configured")
+        _allow_input(hook_event, notice)
 
     try:
         run_input_check(
@@ -114,11 +140,9 @@ def main() -> None:
         )
     except FireguardUnavailableError as exc:
         if fail_closed:
-            if hook_event == "preToolUse":
-                _deny(str(exc))
-            _fail_closed(str(exc))
-        emit_unavailable_notice(session_id, reason=exc.reason)
-        _allow()
+            _fail_closed_input(hook_event, str(exc))
+        notice = emit_unavailable_notice(session_id, reason=exc.reason)
+        _allow_input(hook_event, notice)
     except GuardrailError as exc:
         if hook_event == "preToolUse":
             decision = resolve_override(
@@ -132,16 +156,18 @@ def main() -> None:
             if decision == OverrideDecision.ALLOW:
                 _allow()
             _deny(str(exc))
-        print(str(exc), file=sys.stderr)
-        _allow()
+        _block_prompt(str(exc))
     except Exception as exc:
         if fail_closed:
-            if hook_event == "preToolUse":
-                _deny(f"Fireraven guardrail hook: {exc}")
-            _fail_closed(f"Fireraven guardrail hook: {exc}")
-        emit_unavailable_notice(session_id, reason=resolve_service_failure(exc))
-        _allow()
+            _fail_closed_input(hook_event, f"Fireraven guardrail hook: {exc}")
+        notice = emit_unavailable_notice(
+            session_id, reason=resolve_service_failure(exc)
+        )
+        _allow_input(hook_event, notice)
 
+    if hook_event == "userPromptSubmitted":
+        notice = emit_secured_notice(session_id)
+        _allow_prompt(notice)
     _allow()
 
 

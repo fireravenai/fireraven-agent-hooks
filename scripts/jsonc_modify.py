@@ -289,6 +289,45 @@ def remove_array_items(
   return text, edits
 
 
+def _insert_property_on_object(
+  text: str,
+  parent: Node,
+  key: str,
+  formatted_value: str,
+) -> list[Edit]:
+  indent = _indentation_at(text, parent.start + 1)
+  prop_indent = indent + "  "
+  property_text = f'\n{prop_indent}"{key}": {formatted_value}'
+
+  if not parent.children:
+    insert_at = parent.start + 1
+    return [Edit(insert_at, 0, property_text)]
+
+  _last_key, last_value = parent.children[-1]
+  insert_at = last_value.end
+  return [Edit(insert_at, 0, f",{property_text}")]
+
+
+def ensure_object_path(text: str, root: Node, path: list[str]) -> tuple[str, Node]:
+  """Ensure each segment in path exists as an object, creating empty {} as needed."""
+  if root.kind != "object":
+    raise JsoncModifyError("Document root must be an object")
+
+  built: list[str] = []
+  for segment in path:
+    built.append(segment)
+    node = find_node_at_path(root, built)
+    if node is None:
+      parent = root if len(built) == 1 else find_node_at_path(root, built[:-1])
+      if parent is None or parent.kind != "object":
+        raise JsoncModifyError(f"Parent path {'.'.join(built[:-1])} not found")
+      text = apply_edits(text, _insert_property_on_object(text, parent, segment, "{}"))
+      root = parse_tree(text)
+    elif node.kind != "object":
+      raise JsoncModifyError(f"Path {'.'.join(built)} is not an object")
+  return text, root
+
+
 def append_array_item(
   text: str,
   root: Node,
@@ -297,6 +336,8 @@ def append_array_item(
 ) -> tuple[str, list[Edit]]:
   node = find_node_at_path(root, path)
   if node is None:
+    if path[:-1]:
+      text, root = ensure_object_path(text, root, path[:-1])
     return text, _insert_object_property(text, root, path, value)
 
   if node.kind != "array":
@@ -333,15 +374,7 @@ def _insert_object_property(text: str, root: Node, path: list[str], value: Any) 
   item_indent = prop_indent + "  "
   entry_text = _format_json_value(value, item_indent)
   array_text = f"[\n{item_indent}{entry_text}\n{prop_indent}]"
-  property_text = f'\n{prop_indent}"{key}": {array_text}'
-
-  if not parent.children:
-    insert_at = parent.start + 1
-    return [Edit(insert_at, 0, property_text)]
-
-  last_key, last_value = parent.children[-1]
-  insert_at = last_value.end
-  return [Edit(insert_at, 0, f",{property_text}")]
+  return _insert_property_on_object(text, parent, key, array_text)
 
 
 def ensure_top_level_version(text: str, root: Node) -> tuple[str, list[Edit]]:
@@ -409,12 +442,15 @@ def merge_hook_array(
   path: list[str],
   entry: dict[str, Any],
   owned_markers: list[str],
+  *,
+  ensure_version: bool = True,
 ) -> str:
   root = parse_tree(text)
-  text, version_edits = ensure_top_level_version(text, root)
-  if version_edits:
-    text = apply_edits(text, version_edits)
-    root = parse_tree(text)
+  if ensure_version:
+    text, version_edits = ensure_top_level_version(text, root)
+    if version_edits:
+      text = apply_edits(text, version_edits)
+      root = parse_tree(text)
 
   text, remove_edits = remove_array_items(
     text,

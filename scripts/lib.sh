@@ -163,14 +163,16 @@ CURSOR_INSTALL_DIR="${FIRERAVEN_CURSOR_INSTALL_DIR:-$HOME/.cursor}"
 CLAUDE_INSTALL_DIR="${FIRERAVEN_CLAUDE_INSTALL_DIR:-$HOME/.claude}"
 GITHUB_COPILOT_INSTALL_DIR="${FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR:-$HOME/.copilot}"
 DEVIN_INSTALL_DIR="${FIRERAVEN_DEVIN_INSTALL_DIR:-$HOME/.config/devin}"
+CODEX_INSTALL_DIR="${FIRERAVEN_CODEX_INSTALL_DIR:-$HOME/.codex}"
 
 WINDSURF_SCRIPT="windsurf_guardrail.py"
 CURSOR_SCRIPT="cursor_guardrail.py"
 CLAUDE_SCRIPT="claude_guardrail.py"
 GITHUB_COPILOT_SCRIPT="github_copilot_guardrail.py"
 DEVIN_SCRIPT="devin_guardrail.py"
+CODEX_SCRIPT="codex_guardrail.py"
 MARKER="fireraven"
-FIRERAVEN_ENTRY_PATTERN="fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|github_copilot_guardrail.py|run_github_copilot_guardrail.ps1|devin_guardrail.py"
+FIRERAVEN_ENTRY_PATTERN="fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|github_copilot_guardrail.py|run_github_copilot_guardrail.ps1|devin_guardrail.py|codex_guardrail.py"
 
 WINDSURF_PRE_EVENTS="pre_user_prompt pre_run_command pre_mcp_tool_use pre_write_code pre_read_code"
 WINDSURF_POST_EVENTS="post_cascade_response post_write_code"
@@ -216,6 +218,7 @@ windsurf_hooks_dir() { printf '%s/hooks/fireraven' "$WINDSURF_INSTALL_DIR"; }
 cursor_hooks_dir() { printf '%s/hooks/fireraven' "$CURSOR_INSTALL_DIR"; }
 claude_hooks_dir() { printf '%s/hooks/fireraven' "$CLAUDE_INSTALL_DIR"; }
 devin_hooks_dir() { printf '%s/hooks/fireraven' "$DEVIN_INSTALL_DIR"; }
+codex_hooks_dir() { printf '%s/hooks/fireraven' "$CODEX_INSTALL_DIR"; }
 github_copilot_hooks_dir() { printf '%s/hooks/fireraven' "$GITHUB_COPILOT_INSTALL_DIR"; }
 github_copilot_hooks_json() { printf '%s/hooks/fireraven-fireguard.json' "$GITHUB_COPILOT_INSTALL_DIR"; }
 github_copilot_project_hooks_dir() { printf '%s/.github/hooks/fireraven' "$(pwd)"; }
@@ -252,6 +255,7 @@ copy_package_tree() {
     for file in windsurf_guardrail.py cursor_guardrail.py run_cursor_guardrail.ps1 claude_guardrail.py \
         github_copilot_guardrail.py run_github_copilot_guardrail.ps1 \
         devin_guardrail.py \
+        codex_guardrail.py \
         fireraven_input_guardrail.py _bootstrap.py config.example.env README.md; do
         if [ -f "${src_root}/hooks/${file}" ]; then
             cp "${src_root}/hooks/${file}" "${dest_dir}/${file}"
@@ -275,7 +279,7 @@ download_package_tree() {
         core/serializers.py core/guardrail.py core/human_override.py core/hook_io.py \
         core/unavailable_notice.py core/secured_notice.py core/update_check.py \
         adapters/__init__.py adapters/windsurf.py adapters/cursor.py adapters/claude.py \
-        adapters/github_copilot.py adapters/devin.py \
+        adapters/github_copilot.py adapters/devin.py adapters/codex.py \
         assets/fireraven.ico; do
         download_file "$path" "${dest_dir}/${path}"
     done
@@ -283,6 +287,7 @@ download_package_tree() {
     for file in _bootstrap.py windsurf_guardrail.py cursor_guardrail.py run_cursor_guardrail.ps1 claude_guardrail.py \
         github_copilot_guardrail.py run_github_copilot_guardrail.ps1 \
         devin_guardrail.py \
+        codex_guardrail.py \
         fireraven_input_guardrail.py config.example.env README.md; do
         download_file "hooks/${file}" "${dest_dir}/${file}"
     done
@@ -383,6 +388,23 @@ install_devin() {
     info "Registered Devin Local hooks in ${DEVIN_INSTALL_DIR}/config.json"
 }
 
+merge_codex_hooks_json() {
+    hooks_json="${CODEX_INSTALL_DIR}/hooks.json"
+    script_path="$(codex_hooks_dir)/${CODEX_SCRIPT}"
+
+    run_merge_hooks_config merge-codex \
+        --path "$hooks_json" \
+        --script-path "$script_path"
+}
+
+install_codex() {
+    info "Installing Codex hooks to $(codex_hooks_dir)"
+    setup_config_env "$(codex_hooks_dir)"
+    merge_codex_hooks_json
+    info "Registered Codex hooks in ${CODEX_INSTALL_DIR}/hooks.json"
+    info "Open the Codex CLI and run /hooks to trust these commands before Codex Desktop will run them"
+}
+
 install_github_copilot() {
     info "Installing GitHub Copilot hooks to $(github_copilot_hooks_dir)"
     setup_config_env "$(github_copilot_hooks_dir)"
@@ -405,6 +427,7 @@ install_agent() {
         cursor) install_cursor ;;
         claude) install_claude ;;
         devin) install_devin ;;
+        codex) install_codex ;;
         github-copilot)
             if [ "${FIRERAVEN_PROJECT_INSTALL:-0}" = "1" ]; then
                 install_github_copilot_project
@@ -422,6 +445,7 @@ install_all_agents() {
     install_cursor
     install_claude
     install_devin
+    install_codex
     install_github_copilot
     info "Copilot Studio: see adapters/copilot/README.md for Studio setup"
 }
@@ -458,6 +482,15 @@ remove_agent_hooks() {
             run_merge_hooks_config scrub-devin \
                 --path "${DEVIN_INSTALL_DIR}/config.json" \
                 --owned-pattern "$FIRERAVEN_ENTRY_PATTERN"
+            ;;
+    esac
+    case "$agent" in
+        codex|all)
+            if [ -f "${CODEX_INSTALL_DIR}/hooks.json" ]; then
+                run_merge_hooks_config scrub-codex \
+                    --path "${CODEX_INSTALL_DIR}/hooks.json" \
+                    --owned-pattern "$FIRERAVEN_ENTRY_PATTERN"
+            fi
             ;;
     esac
     case "$agent" in

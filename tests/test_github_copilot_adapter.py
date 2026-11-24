@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from io import StringIO
+from pathlib import Path
+from unittest import mock
 from unittest.mock import patch
 
 from adapters import github_copilot
+from core.secured_notice import SECURED_MESSAGE
 from core.serializers import serialize_github_copilot
+from core.unavailable_notice import UNAVAILABLE_MESSAGE
 
 
 class SerializeGitHubCopilotTests(unittest.TestCase):
@@ -207,6 +212,85 @@ class GitHubCopilotOverrideTests(unittest.TestCase):
                                     github_copilot.main()
         self.assertEqual(cm.exception.code, 0)
         ask.assert_not_called()
+
+
+class GitHubCopilotPromptTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        patcher = mock.patch(
+            "core.session_store.hooks_root",
+            return_value=Path(self._tmpdir.name),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _run(
+        self,
+        *,
+        session_id: str = "gh-prompt",
+        fail_closed: bool = False,
+        side_effect: Exception | None = None,
+        secured_toast: mock.MagicMock | None = None,
+    ) -> str:
+        payload = {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": session_id,
+            "prompt": "My phone number is +1456 78 78 78 78",
+        }
+        check_kw: dict = {}
+        if side_effect is not None:
+            check_kw["side_effect"] = side_effect
+        else:
+            check_kw["return_value"] = {"is_safe": True}
+        with patch.object(github_copilot, "read_hook_input", return_value=payload):
+            with patch.object(github_copilot, "load_config", return_value={}):
+                with patch.object(
+                    github_copilot,
+                    "resolve_settings",
+                    return_value={"fail_closed": fail_closed},
+                ):
+                    with patch.object(github_copilot, "run_input_check", **check_kw):
+                        with patch(
+                            "core.secured_notice.show_unavailable_toast",
+                            secured_toast if secured_toast is not None else mock.DEFAULT,
+                        ):
+                            with patch("core.unavailable_notice.show_unavailable_toast"):
+                                with patch("sys.stdout", new_callable=StringIO) as stdout:
+                                    with self.assertRaises(SystemExit) as cm:
+                                        github_copilot.main()
+        self.assertEqual(cm.exception.code, 0)
+        return stdout.getvalue()
+
+    def test_prompt_guardrail_blocks_without_override(self) -> None:
+        from core.guardrail import GuardrailError
+
+        with patch.object(github_copilot, "resolve_override") as ask:
+            raw = self._run(side_effect=GuardrailError("PII detected", overridable=False))
+        ask.assert_not_called()
+        data = json.loads(raw)
+        self.assertEqual(data["decision"], "block")
+        self.assertEqual(data["reason"], "PII detected")
+
+    def test_first_success_emits_secured_notice_once(self) -> None:
+        toast = mock.MagicMock()
+        first = self._run(secured_toast=toast)
+        second = self._run(secured_toast=toast)
+        self.assertEqual(json.loads(first)["systemMessage"], SECURED_MESSAGE)
+        self.assertEqual(second, "")
+        toast.assert_called_once_with(SECURED_MESSAGE)
+
+    def test_fail_open_emits_unavailable_not_secured(self) -> None:
+        raw = self._run(side_effect=RuntimeError("HTTP 503"))
+        data = json.loads(raw)
+        self.assertEqual(data["systemMessage"], UNAVAILABLE_MESSAGE)
+        self.assertNotEqual(data["systemMessage"], SECURED_MESSAGE)
+
+    def test_fail_closed_prompt_blocks(self) -> None:
+        raw = self._run(fail_closed=True, side_effect=RuntimeError("HTTP 503"))
+        data = json.loads(raw)
+        self.assertEqual(data["decision"], "block")
+        self.assertIn("HTTP 503", data["reason"])
 
 
 if __name__ == "__main__":

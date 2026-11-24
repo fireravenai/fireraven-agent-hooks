@@ -20,8 +20,9 @@ from core.unavailable_notice import emit_unavailable_notice
 class GuardrailError(Exception):
     """Raised when an action must be blocked.
 
-    ``overridable`` is True for FireGuard policy/security violations (human may
-    approve once). Local sensitive-path blocks are not overridable.
+    ``overridable`` is True when a policy or security block may be approved once.
+    FireGuard sets that from the project ``override`` flag. Local sensitive-path
+    blocks and PII blocks are not overridable.
     """
 
     def __init__(self, message: str, *, overridable: bool = True) -> None:

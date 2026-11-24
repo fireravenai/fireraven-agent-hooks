@@ -220,6 +220,27 @@ class EvaluateInputResultTests(unittest.TestCase):
         with self.assertRaises(GuardrailError) as cm:
             evaluate_input_result(result, enforce_pii=False)
         self.assertIn("Security", str(cm.exception))
+        self.assertFalse(cm.exception.overridable)
+
+    def test_policy_block_is_overridable_only_when_response_says_so(self) -> None:
+        result = {
+            "is_safe": False,
+            "security_guardrail_results": {
+                "is_safe": False,
+                "security_violation_message": "prompt injection",
+            },
+        }
+        with self.assertRaises(GuardrailError) as denied:
+            evaluate_input_result(result, enforce_pii=False)
+        self.assertFalse(denied.exception.overridable)
+
+        with self.assertRaises(GuardrailError) as allowed:
+            evaluate_input_result({**result, "override": True}, enforce_pii=False)
+        self.assertTrue(allowed.exception.overridable)
+
+        with self.assertRaises(GuardrailError) as explicit_off:
+            evaluate_input_result({**result, "override": False}, enforce_pii=False)
+        self.assertFalse(explicit_off.exception.overridable)
 
     def test_pii_message_without_masked_text(self) -> None:
         text = pii_violation_message(

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("windsurf", "cursor", "claude", "devin", "github-copilot", "copilot", "all")]
+    [ValidateSet("windsurf", "cursor", "claude", "devin", "codex", "github-copilot", "copilot", "all")]
     [string]$Agent = $(if ($env:FIRERAVEN_AGENT) { $env:FIRERAVEN_AGENT } else { "windsurf" }),
     [switch]$Project,
     [string]$HooksRepo = $(if ($env:FIRERAVEN_HOOKS_REPO) { $env:FIRERAVEN_HOOKS_REPO } else { "fireravenai/fireraven-agent-hooks" }),
@@ -17,13 +17,14 @@ $WindsurfScript = "windsurf_guardrail.py"
 $CursorScript = "cursor_guardrail.py"
 $ClaudeScript = "claude_guardrail.py"
 $DevinScript = "devin_guardrail.py"
+$CodexScript = "codex_guardrail.py"
 $GitHubCopilotScript = "github_copilot_guardrail.py"
 $WindsurfPreEvents = @("pre_user_prompt", "pre_run_command", "pre_mcp_tool_use", "pre_write_code", "pre_read_code")
 $WindsurfPostEvents = @("post_cascade_response", "post_write_code")
 $CursorEvents = @("beforeSubmitPrompt", "beforeShellExecution", "beforeMCPExecution", "beforeReadFile", "preToolUse", "subagentStart", "afterFileEdit")
 $GitHubCopilotEvents = @("userPromptSubmitted", "preToolUse", "postToolUse")
 # Markers are literal substrings (not regex) matched against serialized hook entries.
-$FireravenEntryPattern = "fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|github_copilot_guardrail.py|run_github_copilot_guardrail.ps1|devin_guardrail.py"
+$FireravenEntryPattern = "fireraven|windsurf_guardrail.py|cursor_guardrail.py|run_cursor_guardrail.ps1|claude_guardrail.py|fireraven_input_guardrail.py|github_copilot_guardrail.py|run_github_copilot_guardrail.ps1|devin_guardrail.py|codex_guardrail.py"
 
 function Write-Info {
     param([string]$Message)
@@ -73,6 +74,13 @@ function Get-DevinInstallDir {
     return (Join-Path (Get-UserHome) "AppData\Roaming\devin")
 }
 
+function Get-CodexInstallDir {
+    if ($env:FIRERAVEN_CODEX_INSTALL_DIR) {
+        return $env:FIRERAVEN_CODEX_INSTALL_DIR
+    }
+    return (Join-Path (Get-UserHome) ".codex")
+}
+
 function Get-GitHubCopilotInstallDir {
     if ($env:FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR) {
         return $env:FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR
@@ -84,6 +92,7 @@ function Get-WindsurfHooksDir { Join-Path (Get-WindsurfInstallDir) "hooks\firera
 function Get-CursorHooksDir { Join-Path (Get-CursorInstallDir) "hooks\fireraven" }
 function Get-ClaudeHooksDir { Join-Path (Get-ClaudeInstallDir) "hooks\fireraven" }
 function Get-DevinHooksDir { Join-Path (Get-DevinInstallDir) "hooks\fireraven" }
+function Get-CodexHooksDir { Join-Path (Get-CodexInstallDir) "hooks\fireraven" }
 function Get-GitHubCopilotHooksDir { Join-Path (Get-GitHubCopilotInstallDir) "hooks\fireraven" }
 function Get-GitHubCopilotHooksJson { Join-Path (Get-GitHubCopilotInstallDir) "hooks\fireraven-fireguard.json" }
 function Get-GitHubCopilotProjectHooksDir { Join-Path (Get-Location) ".github\hooks\fireraven" }
@@ -526,7 +535,7 @@ function Copy-PackageTree {
         Copy-Item -Recurse -Force $source $DestinationDir
     }
 
-    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "devin_guardrail.py", "github_copilot_guardrail.py", "run_github_copilot_guardrail.ps1", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
+    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "devin_guardrail.py", "codex_guardrail.py", "github_copilot_guardrail.py", "run_github_copilot_guardrail.ps1", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
         $source = Join-Path (Join-Path $SourceRoot "hooks") $file
         if (Test-Path $source) {
             Copy-Item -Force $source (Join-Path $DestinationDir $file)
@@ -577,13 +586,14 @@ function Download-PackageTree {
         "adapters/cursor.py",
         "adapters/claude.py",
         "adapters/devin.py",
+        "adapters/codex.py",
         "adapters/github_copilot.py",
         "assets/fireraven.ico"
     )) {
         Download-RepoFile -Path $path -Destination (Join-Path $DestinationDir ($path -replace "/", "\"))
     }
 
-    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "devin_guardrail.py", "github_copilot_guardrail.py", "run_github_copilot_guardrail.ps1", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
+    foreach ($file in @("_bootstrap.py", "windsurf_guardrail.py", "cursor_guardrail.py", "run_cursor_guardrail.ps1", "claude_guardrail.py", "devin_guardrail.py", "codex_guardrail.py", "github_copilot_guardrail.py", "run_github_copilot_guardrail.ps1", "fireraven_input_guardrail.py", "config.example.env", "README.md")) {
         Download-RepoFile -Path "hooks/$file" -Destination (Join-Path $DestinationDir $file)
     }
 }
@@ -761,6 +771,24 @@ function Merge-DevinConfigJson {
     Write-Info "Registered Devin Local hooks in $configJson"
 }
 
+function Merge-CodexHooksJson {
+    param([hashtable]$PythonCommand)
+
+    $hooksJson = Join-Path (Get-CodexInstallDir) "hooks.json"
+    $scriptPath = Join-Path (Get-CodexHooksDir) $CodexScript
+    $command = New-DirectPyHookCommand -ScriptPath $scriptPath
+
+    Invoke-MergeHooksConfig -PythonCommand $PythonCommand -Arguments @(
+        "merge-codex",
+        "--path", $hooksJson,
+        "--script-path", $scriptPath,
+        "--command", $command,
+        "--command-windows", $command
+    )
+    Write-Info "Registered Codex hooks in $hooksJson"
+    Write-Info "Open the Codex CLI and run /hooks to trust these commands before Codex Desktop will run them"
+}
+
 function Merge-GitHubCopilotHooksJson {
     param(
         [hashtable]$PythonCommand,
@@ -845,6 +873,19 @@ function Install-Devin {
     Merge-DevinConfigJson -PythonCommand $PythonCommand
 }
 
+function Install-Codex {
+    param(
+        [hashtable]$PythonCommand,
+        [string]$MetaAgents
+    )
+    $destination = Get-CodexHooksDir
+    Write-Info "Installing Codex hooks to $destination"
+    Install-PackageTree -DestinationDir $destination
+    Write-InstallMeta -DestinationDir $destination -Agents $MetaAgents
+    Ensure-ConfigEnv -DestinationDir $destination
+    Merge-CodexHooksJson -PythonCommand $PythonCommand
+}
+
 function Install-GitHubCopilot {
     param(
         [hashtable]$PythonCommand,
@@ -912,6 +953,9 @@ function Get-InstallAgents {
     if (Test-FireravenGuardrail -InstallDir (Get-DevinInstallDir) -ScriptName $DevinScript) {
         $found += "devin"
     }
+    if (Test-FireravenGuardrail -InstallDir (Get-CodexInstallDir) -ScriptName $CodexScript) {
+        $found += "codex"
+    }
     if (Test-FireravenGuardrail -InstallDir (Get-GitHubCopilotInstallDir) -ScriptName $GitHubCopilotScript) {
         $found += "github-copilot"
     }
@@ -930,6 +974,7 @@ foreach ($installAgent in $installAgents) {
             Install-Cursor -PythonCommand $pythonCommand -MetaAgents "all"
             Install-Claude -PythonCommand $pythonCommand -MetaAgents "all"
             Install-Devin -PythonCommand $pythonCommand -MetaAgents "all"
+            Install-Codex -PythonCommand $pythonCommand -MetaAgents "all"
             Install-GitHubCopilot -PythonCommand $pythonCommand -MetaAgents "all" -Target user
             Write-Info "Copilot Studio uses connector topics in adapters/copilot/ (see README)"
         }
@@ -937,6 +982,7 @@ foreach ($installAgent in $installAgents) {
         "cursor" { Install-Cursor -PythonCommand $pythonCommand -MetaAgents "cursor" }
         "claude" { Install-Claude -PythonCommand $pythonCommand -MetaAgents "claude" }
         "devin" { Install-Devin -PythonCommand $pythonCommand -MetaAgents "devin" }
+        "codex" { Install-Codex -PythonCommand $pythonCommand -MetaAgents "codex" }
         "github-copilot" {
             $target = if ($Project -and $Agent -eq "github-copilot") { "project" } else { "user" }
             Install-GitHubCopilot -PythonCommand $pythonCommand -MetaAgents "github-copilot" -Target $target

@@ -409,3 +409,74 @@ def serialize_devin(payload: dict) -> str | None:
         return f"Devin tool: {tool_name}\n{json.dumps(tool_input, indent=2)}"
     prompt = (payload.get("prompt") or "").strip()
     return prompt or None
+
+
+def infer_codex_event(payload: dict) -> str:
+    """Codex lifecycle events use the same names as Claude Code."""
+    return infer_claude_event(payload)
+
+
+def _codex_local_block(tool_input: dict | str) -> str | None:
+    """Hard-deny sensitive paths in Codex tool arguments before the API call."""
+    candidates: list[str] = []
+    if isinstance(tool_input, str):
+        text = tool_input.strip()
+        if text:
+            candidates.append(text)
+    elif isinstance(tool_input, dict):
+        command = tool_input.get("command")
+        if isinstance(command, str) and command.strip():
+            candidates.append(command)
+        for key in ("path", "file_path", "filePath"):
+            value = tool_input.get(key)
+            if isinstance(value, str) and value.strip():
+                candidates.append(value.strip())
+    for candidate in candidates:
+        blocked = local_sensitive_path_block(candidate)
+        if blocked:
+            return f"__LOCAL_BLOCK__:{blocked}"
+    return None
+
+
+def serialize_codex(payload: dict) -> str | None:
+    hook_event = infer_codex_event(payload)
+    tool_name = payload.get("tool_name") or payload.get("name") or ""
+
+    if hook_event == "PostToolUse":
+        response = payload.get("tool_response")
+        if response is None:
+            response = payload.get("tool_result")
+        if response is None:
+            return None
+        if isinstance(response, str):
+            body = response.strip()
+            if not body:
+                return None
+            return f"Codex PostToolUse ({tool_name}):\n{_truncate(body)}"
+        return (
+            f"Codex PostToolUse ({tool_name}):\n"
+            f"{_truncate(json.dumps(response, indent=2))}"
+        )
+
+    if hook_event == "UserPromptSubmit":
+        prompt = (payload.get("prompt") or "").strip()
+        return prompt or None
+
+    tool_input = payload.get("tool_input")
+    if tool_input is None:
+        tool_input = payload.get("input")
+        if tool_input is None:
+            tool_input = payload.get("arguments") or {}
+
+    if hook_event == "PreToolUse":
+        blocked = _codex_local_block(tool_input)
+        if blocked:
+            return blocked
+
+    if isinstance(tool_input, str):
+        text = tool_input.strip()
+        return text or None
+    if tool_name or tool_input:
+        return f"Codex tool: {tool_name}\n{json.dumps(tool_input, indent=2)}"
+    prompt = (payload.get("prompt") or "").strip()
+    return prompt or None

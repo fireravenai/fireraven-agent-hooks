@@ -88,6 +88,14 @@ CLAUDE_EVENTS = ["PreToolUse", "UserPromptSubmit", "PostToolUse"]
 DEVIN_OWNED_MARKERS = ["fireraven", "devin_guardrail.py"]
 DEVIN_EVENTS = ["PreToolUse", "UserPromptSubmit", "PostToolUse"]
 
+CODEX_OWNED_MARKERS = ["fireraven", "codex_guardrail.py"]
+CODEX_EVENTS = ["PreToolUse", "UserPromptSubmit", "PostToolUse"]
+CODEX_STATUS_MESSAGES = {
+  "UserPromptSubmit": "Checking prompt with FireGuard",
+  "PreToolUse": "Checking tool call with FireGuard",
+  "PostToolUse": "Reviewing tool output with FireGuard",
+}
+
 # Host hook timeout: keep human override dialogs from being killed early.
 HOOK_TIMEOUT_SEC = 600
 
@@ -201,6 +209,40 @@ def cmd_merge_devin(args: argparse.Namespace) -> None:
   write_jsonc_file(args.path, text)
 
 
+def _default_codex_document() -> str:
+  return '{\n  "hooks": {}\n}\n'
+
+
+def cmd_merge_codex(args: argparse.Namespace) -> None:
+  """Merge Codex lifecycle hooks into ~/.codex/hooks.json."""
+  _ensure_parent(args.path)
+  command = args.command or f"python3 {args.script_path}"
+  text = _read_text(args.path)
+  if not text.strip():
+    text = _default_codex_document()
+  for event in CODEX_EVENTS:
+    handler = {
+      "type": "command",
+      "command": command,
+      "timeout": HOOK_TIMEOUT_SEC,
+      "statusMessage": CODEX_STATUS_MESSAGES[event],
+    }
+    if args.command_windows:
+      handler["commandWindows"] = args.command_windows
+    entry = {"hooks": [handler]}
+    try:
+      text = merge_hook_array(
+        text,
+        ["hooks", event],
+        entry,
+        CODEX_OWNED_MARKERS,
+        ensure_version=False,
+      )
+    except JsoncModifyError as exc:
+      _fail(args.path, exc)
+  write_jsonc_file(args.path, text)
+
+
 def cmd_merge_github_copilot(args: argparse.Namespace) -> None:
   _ensure_parent(args.path)
   entry = {
@@ -246,6 +288,15 @@ def cmd_scrub_devin(args: argparse.Namespace) -> None:
   )
 
 
+def cmd_scrub_codex(args: argparse.Namespace) -> None:
+  _scrub_events(
+    args.path,
+    _read_text(args.path),
+    CODEX_EVENTS,
+    args.owned_pattern.split("|"),
+  )
+
+
 def cmd_scrub_github_copilot(args: argparse.Namespace) -> None:
   _scrub_events(args.path, _read_text(args.path), args.events.split(), args.owned_pattern.split("|"))
 
@@ -284,6 +335,13 @@ def build_parser() -> argparse.ArgumentParser:
   merge_devin.add_argument("--command", default="")
   merge_devin.set_defaults(func=cmd_merge_devin)
 
+  merge_codex = sub.add_parser("merge-codex")
+  merge_codex.add_argument("--path", required=True)
+  merge_codex.add_argument("--script-path", required=True)
+  merge_codex.add_argument("--command", default="")
+  merge_codex.add_argument("--command-windows", default="")
+  merge_codex.set_defaults(func=cmd_merge_codex)
+
   merge_github_copilot = sub.add_parser("merge-github-copilot")
   add_common_merge_flags(merge_github_copilot)
   merge_github_copilot.add_argument("--script-path", required=True)
@@ -315,6 +373,11 @@ def build_parser() -> argparse.ArgumentParser:
   scrub_devin.add_argument("--path", required=True)
   scrub_devin.add_argument("--owned-pattern", required=True)
   scrub_devin.set_defaults(func=cmd_scrub_devin)
+
+  scrub_codex = sub.add_parser("scrub-codex")
+  scrub_codex.add_argument("--path", required=True)
+  scrub_codex.add_argument("--owned-pattern", required=True)
+  scrub_codex.set_defaults(func=cmd_scrub_codex)
 
   scrub_github_copilot = sub.add_parser("scrub-github-copilot")
   scrub_github_copilot.add_argument("--path", required=True)

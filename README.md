@@ -12,7 +12,7 @@
   <img alt="GitHub Copilot" src="https://img.shields.io/badge/GitHub%20Copilot-guarded-24292F?style=for-the-badge&logo=githubcopilot&logoColor=white" />
 </p>
 
-FireGuard guardrails for AI coding agents: **Windsurf/Cascade**, **Devin Local**, **Cursor**, **Claude Code**, **GitHub Copilot**, and **Microsoft Copilot Studio**.
+FireGuard guardrails for AI coding agents: **Windsurf/Cascade**, **Devin Local**, **Cursor**, **Claude Code**, **Codex Desktop**, **GitHub Copilot**, and **Microsoft Copilot Studio**.
 
 Block secret leakage, dangerous execution, and data poisoning at the hook layer — before prompts, shell commands, MCP calls, and file writes reach your agent.
 
@@ -136,14 +136,18 @@ The script installs into `C:\Users\<employee>\.claude\`, writes `hooks\config.en
 | Devin Local | `--agent devin` | `~/.config/devin/config.json` (`%APPDATA%\devin\` on Windows) | `PreToolUse` OS dialog + `decision` approve/block; `UserPromptSubmit` exit 2 |
 | Cursor | `--agent cursor` | `~/.cursor/hooks.json` | JSON deny for prompts; OS dialog override for tool/shell/MCP/read/subagent blocks |
 | Claude Code | `--agent claude` | `~/.claude/settings.json` | CLI: `PreToolUse` native ask; VS Code/Desktop: OS dialog; `UserPromptSubmit` exit 2; `PostToolUse`/`Read` audit; hook `timeout` 600s |
-| GitHub Copilot | `--agent github-copilot` | `~/.copilot/hooks/fireraven-fireguard.json` or `.github/hooks/fireraven-fireguard.json` | CLI: OS dialog then allow/deny on `preToolUse`; cloud: hard deny |
+| Codex Desktop | `--agent codex` | `~/.codex/hooks.json` | `PreToolUse` OS dialog then `permissionDecision: deny` (no native ask); `UserPromptSubmit` `decision: block`; `PostToolUse` audit; hook `timeout` 600s. Trust the commands with `/hooks` in the Codex CLI before Desktop will run them |
+| GitHub Copilot | `--agent github-copilot` | `~/.copilot/hooks/fireraven-fireguard.json` or `.github/hooks/fireraven-fireguard.json` | VS Code Copilot Chat: `UserPromptSubmit` `decision: block`; CLI/cloud: `preToolUse` only |
 | Microsoft Copilot Studio | `--agent copilot` | Studio connector topics | Flow conditions |
 
 ### Human override matrix
 
+The Allow/Deny popup follows the FireGuard project switch. Each guardrail response includes `override`. Hooks show the popup for an otherwise overridable policy or security block only when `override` is `true`. Missing or `false` is a hard deny. The project setting defaults to on. Prompt events, local sensitive-path blocks, and PII blocks stay hard deny either way.
+
 | Agent | Override UX |
 |-------|-------------|
 | Claude Code | Terminal CLI: native `permissionDecision: "ask"` with policy reason. VS Code plugin and Claude Code Desktop (`CLAUDE_CODE_ENTRYPOINT=claude-vscode` / `claude-desktop`): OS dialog, then allow or `permissionDecision: deny`. Popup close / Esc / dialog timeout = deny. Hook registration uses a 600s timeout where supported |
+| Codex Desktop | OS dialog on overridable `PreToolUse`, then allow or `permissionDecision: deny`. Native `ask` is not used: Codex treats it as a failed hook and continues the tool. Popup close / Esc / dialog timeout = deny |
 | Cursor | OS dialog (yad → zenity → kdialog on Linux; osascript; MessageBox). Native `permission: "ask"` is **not** used — only `deny` is reliably enforced today |
 | Windsurf / Cascade | OS dialog, then exit `0` (allow) or exit `2` (deny). No native ask API |
 | Devin Local | OS dialog, then `{"decision":"approve"}` or `{"decision":"block","reason":"..."}` |
@@ -169,7 +173,7 @@ The script installs into `C:\Users\<employee>\.claude\`, writes `hooks\config.en
 
 **Output (audit only):** `post_cascade_response`, `post_write_code`
 
-**Human override:** On FireGuard policy/security violations for tool pre-hooks (`pre_run_command`, `pre_mcp_tool_use`, `pre_write_code`, `pre_read_code`), the hook shows an OS Allow/Deny dialog. Allow → exit 0; Deny/unavailable → stderr + exit 2. `pre_user_prompt` stays hard deny. Local sensitive-path blocks are not overridable. Hook entries use `show_output: true` so deny reasons appear in Cascade UI.
+**Human override:** On FireGuard policy/security violations for tool pre-hooks (`pre_run_command`, `pre_mcp_tool_use`, `pre_write_code`, `pre_read_code`), the hook shows an OS Allow/Deny dialog when the response `override` field is true. Allow → exit 0; Deny/unavailable → stderr + exit 2. `pre_user_prompt` stays hard deny. Local sensitive-path blocks are not overridable. Hook entries use `show_output: true` so deny reasons appear in Cascade UI.
 
 ### Devin Local
 
@@ -181,7 +185,7 @@ Devin Local is the local agent in Devin Desktop (Cascade’s successor), not clo
 
 **Output (audit only):** `PostToolUse` (matcher for `read` / `notebook_read`)
 
-**Human override:** Overridable `PreToolUse` policy blocks use the OS dialog, then `decision: approve` or `decision: block` with reason. Closing the popup without Allow keeps the block. Hooks are registered with a **600s** `timeout`. `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks are not overridable.
+**Human override:** Overridable `PreToolUse` policy blocks use the OS dialog when the response `override` field is true, then `decision: approve` or `decision: block` with reason. Closing the popup without Allow keeps the block. Hooks are registered with a **600s** `timeout`. `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks are not overridable.
 
 ### Cursor
 
@@ -191,7 +195,7 @@ Devin Local is the local agent in Devin Desktop (Cascade’s successor), not clo
 
 Denies via JSON rather than exit codes. `beforeSubmitPrompt` uses `{"continue": false}`; other Cursor events use `{"permission": "deny"}`. On the first successful FireGuard pass for a conversation, `beforeSubmitPrompt` may include `user_message: "Conversation secured by Fireraven"` and shows an OS notice once per conversation. Linux toasts use `assets/fireraven.ico` when installed; Windows shows a best-effort Action Center corner toast attributed to **Fireraven** (Start Menu AUMID registered by the installer).
 
-**Human override:** On FireGuard policy/security violations for tool/shell/MCP/read/subagent gates, the hook shows a blocking OS confirmation dialog (yad/zenity/kdialog on Linux, osascript on macOS, MessageBox on Windows). Allow continues once for that action; Deny, window close, Esc, dialog timeout, or no-display keeps the deny. Local sensitive-path blocks (`.env`, keys, etc.) are **not** overridable. Prompt blocks stay hard deny (edit the prompt). Cursor’s native `permission: "ask"` is not used — it is not reliably enforced today. Fireraven registers a **600s** hook `timeout` (and `failClosed` on key Cursor events) so the host does not kill the dialog early.
+**Human override:** On FireGuard policy/security violations for tool/shell/MCP/read/subagent gates, the hook shows a blocking OS confirmation dialog when the response `override` field is true (yad/zenity/kdialog on Linux, osascript on macOS, MessageBox on Windows). Allow continues once for that action; Deny, window close, Esc, dialog timeout, or no-display keeps the deny. Local sensitive-path blocks (`.env`, keys, etc.) are **not** overridable. Prompt blocks stay hard deny (edit the prompt). Cursor’s native `permission: "ask"` is not used — it is not reliably enforced today. Fireraven registers a **600s** hook `timeout` (and `failClosed` on key Cursor events) so the host does not kill the dialog early.
 
 Cursor coverage is self-contained in `cursor_guardrail.py` / `~/.cursor/hooks.json`. If Cursor also loads Claude Code third-party hooks, Fireraven’s Claude adapter no-ops under Cursor so enforcement stays on these native Cursor hooks only.
 
@@ -203,19 +207,37 @@ Cursor coverage is self-contained in `cursor_guardrail.py` / `~/.cursor/hooks.js
 
 **Output (audit only):** `PostToolUse` (matcher `Read`) — screens read body after the tool ran; cannot undo; warns via `systemMessage` / `additionalContext`
 
-**Human override:** On FireGuard policy/security violations for `PreToolUse`, behavior depends on host (`CLAUDE_CODE_ENTRYPOINT`): terminal CLI returns native `permissionDecision: "ask"` with the policy reason in the terminal; VS Code plugin and Claude Code Desktop show an OS Allow/Deny dialog, then allow once or return `permissionDecision: "deny"`. Closing the popup, Esc, or dialog timeout keeps the deny. Hook commands are registered with a **600s** `timeout`. `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks are not overridable.
+**Human override:** On FireGuard policy/security violations for `PreToolUse`, and only when the response `override` field is true, behavior depends on host (`CLAUDE_CODE_ENTRYPOINT`): terminal CLI returns native `permissionDecision: "ask"` with the policy reason in the terminal; VS Code plugin and Claude Code Desktop show an OS Allow/Deny dialog, then allow once or return `permissionDecision: "deny"`. Closing the popup, Esc, or dialog timeout keeps the deny. Hook commands are registered with a **600s** `timeout`. `UserPromptSubmit` stays hard deny (exit 2). Local sensitive-path blocks are not overridable.
 
 `FileChanged` and `SubagentStart` are not registered as guardrail gates (`SubagentStart` cannot block; Agent prompts are already covered by `PreToolUse`).
 
 If Cursor has **third-party Claude Code hooks** enabled, it may also invoke `~/.claude/settings.json` hooks during Cursor sessions. Fireraven’s Claude adapter detects Cursor (`cursor_version` / `CURSOR_VERSION`) and exits without enforcing so native Cursor hooks remain the only FireGuard path. To stop those invocations entirely, disable *Include third-party Plugins, Skills, and other configs* in Cursor Settings → Rules, Skills, Subagents.
 
+### Codex Desktop
+
+Codex Desktop (the ChatGPT desktop app) and the Codex CLI share `~/.codex`. Install with `./fg install --agent codex`. Scripts land in `~/.codex/hooks/fireraven/` and registration is only in `~/.codex/hooks.json` (not inline `[hooks]` in `config.toml`).
+
+**Input (blocking):** `UserPromptSubmit` (typed prompts, including PII; hard deny with `{"decision":"block","reason":"..."}`) and `PreToolUse` (local tool calls: `Bash`, `apply_patch` / `Edit` / `Write`, MCP tools, and other local function tools). No matcher, so every local tool is checked.
+
+**Output (audit only):** `PostToolUse` for those same local tools. Warns with `systemMessage` and `additionalContext`. A finished tool cannot be undone.
+
+**Notices:** The first allowed prompt in a session notifies "Conversation secured by Fireraven" (OS notification and Desktop `systemMessage`). When FireGuard cannot run and fail mode is open, the same once-per-session pair uses "FireGuard unavailable", "FireGuard not configured", or "FireGuard: no credits left". A later event in that session stays quiet.
+
+**Human override:** Overridable `PreToolUse` policy/security hits show the OS dialog, then exit 0 or `permissionDecision: "deny"`. Do not return `permissionDecision: "ask"` — Codex marks that hook failed and still runs the tool. `UserPromptSubmit` stays a hard deny. Local sensitive-path blocks (including paths inside `tool_input.command`) are not overridable. Hook commands use a **600s** timeout.
+
+**Trust:** Codex skips untrusted hook definitions, and Desktop has no review screen. After install, open the interactive Codex CLI (on this kind of install, the bundled binary, not a Desktop prompt) and run `/hooks` to trust the Fireraven commands. Editing those commands later requires trusting them again. Restart Codex Desktop after trusting.
+
+**Not covered:** hosted tools such as `WebSearch` never enter `PreToolUse` / `PostToolUse`. A later `write_stdin` on a shell session that already passed `PreToolUse` is not checked again.
+
 ### GitHub Copilot
 
-**Supported surfaces:** Copilot CLI (`~/.copilot/hooks/`) and Copilot cloud agent (`.github/hooks/` on the default branch). Not VS Code inline completions.
+**Supported surfaces:** Copilot CLI (`~/.copilot/hooks/`), VS Code Copilot Chat (same user-level install), and Copilot cloud agent (`.github/hooks/` on the default branch). Not VS Code inline completions or Tab suggestions.
 
-**Input (audit):** `userPromptSubmitted` — runs FireGuard check; Copilot does not process hook output (cannot block prompts)
+**Input (blocking in VS Code Copilot Chat):** `userPromptSubmitted` / `UserPromptSubmit` — FireGuard check. An unsafe prompt, including PII, prints `{"decision":"block","reason":"..."}` and Copilot Chat stops the turn. The first successful check in a session prints `{"systemMessage":"Conversation secured by Fireraven"}`. Fail-open prints `systemMessage` once per session: `FireGuard unavailable`, `FireGuard not configured`, or `FireGuard: no credits left`.
 
-**Input (blocking):** `preToolUse` — on overridable FireGuard policy/security violations, **Copilot CLI** shows an OS Allow/Deny dialog, then allows or returns `{"permissionDecision":"deny","permissionDecisionReason":"..."}`. **Cloud agent** has no GUI, so unavailable dialog → hard deny. Do not use native `permissionDecision: "ask"` (unreliable).
+**Input (audit on CLI and cloud agent):** the same event runs the check, but those hosts ignore `userPromptSubmitted` stdout, so prompts are not blocked there.
+
+**Input (blocking):** `preToolUse` — on FireGuard policy/security violations with response `override: true`, **Copilot CLI** shows an OS Allow/Deny dialog, then allows or returns `{"permissionDecision":"deny","permissionDecisionReason":"..."}`. `override: false` is a hard deny. **Cloud agent** has no GUI, so unavailable dialog → hard deny. Do not use native `permissionDecision: "ask"` (unreliable).
 
 **Output (audit only):** `postToolUse`
 
@@ -235,7 +257,7 @@ echo '{"sessionId":"test","toolName":"bash","toolArgs":"{\"command\":\"rm -rf /\
   | python3 ~/.copilot/hooks/fireraven/github_copilot_guardrail.py
 ```
 
-4. End-to-end: run a Copilot CLI agent session or trigger a Copilot cloud agent job — blocking happens on **tool calls** (`preToolUse`), not on prompt submit
+4. End-to-end: VS Code Copilot Chat blocks an unsafe prompt on `UserPromptSubmit`. Copilot CLI and the cloud agent still block on tool calls (`preToolUse`) only.
 
 See [adapters/github_copilot/README.md](adapters/github_copilot/README.md) for cloud agent prerequisites and Windows notes.
 
@@ -325,6 +347,7 @@ Like Claude Code, Devin Local runs hook commands through a POSIX-style shell tha
 - If Devin/Windsurf hooks do not run, confirm `%USERPROFILE%\.codeium\windsurf\hooks.json` contains a direct Python `powershell` field for each Fireraven hook event.
 - If Devin Local hooks fail with a glued path like `UsersjsAppDataRoamingdevinhooks...`, re-run `install.ps1 -Agent devin` and confirm `%APPDATA%\devin\config.json` uses `py -3 C:/.../hooks/fireraven/devin_guardrail.py` (forward slashes, no `\`).
 - If Claude Code hooks do not run, confirm `%USERPROFILE%\.claude\settings.json` uses direct `py -3 C:/.../hooks/fireraven/claude_guardrail.py` commands (no `powershell` wrapper) for both `PreToolUse` and `UserPromptSubmit`.
+- If Codex Desktop hooks do not run, confirm `%USERPROFILE%\.codex\hooks.json` uses `commandWindows` `py -3 C:/.../hooks/fireraven/codex_guardrail.py` (forward slashes), then trust that definition with `/hooks` in the Codex CLI. Desktop skips untrusted hooks with no prompt.
 - If credentials fail, edit the `config.env` file under the installed agent's `hooks/fireraven` directory and restart the IDE.
 - If install fails with a JSONC parse error on `hooks.json`, fix syntax errors in the file (comments alone are supported). The installer preserves `//` comments and non-Fireraven hook entries.
 - **OS notice (secured / unavailable) not showing:** On Windows, Fireraven shows a best-effort Action Center corner toast (WinRT `ToastGeneric`) branded via a silent Start Menu shortcut (`Fireraven.FireGuard` AppUserModelID created by `install.ps1`; removed by `uninstall.ps1`). Reinstall hooks after upgrade. If it does not appear, turn off **Do not disturb** (Win11) / **Focus assist** (Win10) and allow notifications for **Fireraven**. If the banner still says Windows PowerShell, re-run `install.ps1`. Notice is best-effort; Cursor **Output → Hooks** / `user_message` still confirm FireGuard ran (including `Conversation secured by Fireraven`).
@@ -339,6 +362,7 @@ Edit `config.env` in each agent's hooks directory:
 | Windsurf / Cascade | `~/.codeium/windsurf/hooks/fireraven/config.env` |
 | Devin Local | `~/.config/devin/hooks/fireraven/config.env` (`%APPDATA%\devin\hooks\fireraven\` on Windows) |
 | Claude Code | `~/.claude/hooks/fireraven/config.env` |
+| Codex Desktop | `~/.codex/hooks/fireraven/config.env` (`%USERPROFILE%\.codex\hooks\fireraven\` on Windows) |
 | GitHub Copilot (CLI) | `~/.copilot/hooks/fireraven/config.env` |
 | GitHub Copilot (cloud agent) | `.github/hooks/fireraven/config.env` (gitignored) |
 
@@ -385,7 +409,7 @@ This value is sent as `execution_mode` on each input and output guardrail API ca
 | Value | When to use |
 |-------|-------------|
 | `closed` | Block the agent action when FireGuard cannot run (missing config, no credits, network error, timeout, HTTP error). Use for strict production / paid enforcement. |
-| `open` | **Default.** Allow the agent action through when FireGuard cannot run. Shows a once-per-session short notice via OS toast and, on Cursor, `user_message` on the allow response (stderr also logs for Output → Hooks). Notice text depends on the failure: `FireGuard unavailable`, `FireGuard not configured`, or `FireGuard: no credits left`. Traffic is **not** monitored until FireGuard recovers. Policy violations and local sensitive-path blocks still deny. |
+| `open` | **Default.** Allow the agent action through when FireGuard cannot run. Shows a once-per-session short notice via OS toast and, on Cursor, `user_message` on the allow response (stderr also logs for Output → Hooks). VS Code Copilot Chat shows the same text as `systemMessage` on `UserPromptSubmit`. Notice text depends on the failure: `FireGuard unavailable`, `FireGuard not configured`, or `FireGuard: no credits left`. Traffic is **not** monitored until FireGuard recovers. Policy violations and local sensitive-path blocks still deny. |
 
 Restart your IDE(s) after editing `config.env`.
 
@@ -396,11 +420,12 @@ Restart your IDE(s) after editing `config.env`.
 | `FIRERAVEN_HOOKS_REPO` | `fireravenai/fireraven-agent-hooks` | GitHub repo |
 | `FIRERAVEN_HOOKS_REF` | `main` | Branch or tag |
 | `FIRERAVEN_HOOKS_RAW_BASE` | (derived from repo/ref) | Opaque path-join base for public hosts |
-| `FIRERAVEN_AGENT` | `windsurf` | Agent for install (`windsurf`, `cursor`, `claude`, `devin`, `github-copilot`, `copilot`, `all`) |
+| `FIRERAVEN_AGENT` | `windsurf` | Agent for install (`windsurf`, `cursor`, `claude`, `devin`, `codex`, `github-copilot`, `copilot`, `all`) |
 | `FIRERAVEN_INSTALL_DIR` | `~/.codeium/windsurf` | Windsurf/Cascade install dir |
 | `FIRERAVEN_CURSOR_INSTALL_DIR` | `~/.cursor` | Cursor install dir |
 | `FIRERAVEN_CLAUDE_INSTALL_DIR` | `~/.claude` | Claude Code install dir |
 | `FIRERAVEN_DEVIN_INSTALL_DIR` | `~/.config/devin` | Devin Local install dir |
+| `FIRERAVEN_CODEX_INSTALL_DIR` | `~/.codex` | Codex Desktop / CLI home (`hooks.json` and `hooks/fireraven/`) |
 | `FIRERAVEN_GITHUB_COPILOT_INSTALL_DIR` | `~/.copilot` | GitHub Copilot CLI install dir |
 | `FIRERAVEN_PROJECT_INSTALL` | `0` | Set to `1` or pass `--project` for cloud agent project install |
 
@@ -408,7 +433,7 @@ Hook runtime settings (`FIRERAVEN_GUARDRAILS_API_KEY`, `FIRERAVEN_EXECUTION_MODE
 
 ## Updates
 
-All supported coding agents share the same update path via `hooks/_bootstrap.py` (Cursor, Claude Code, Windsurf/Cascade, Devin Local, GitHub Copilot).
+All supported coding agents share the same update path via `hooks/_bootstrap.py` (Cursor, Claude Code, Windsurf/Cascade, Devin Local, Codex Desktop, GitHub Copilot).
 
 On hook runs, Fireraven compares the local `VERSION` file to the channel remote `VERSION` (GitHub path-join or GitLab API + token):
 

@@ -110,6 +110,7 @@ case "$FIRERAVEN_AGENT" in
         _install_tree "$(cursor_hooks_dir)" "all"
         _install_tree "$(claude_hooks_dir)" "all"
         _install_tree "$(devin_hooks_dir)" "all"
+        _install_tree "$(codex_hooks_dir)" "all"
         _install_tree "$(github_copilot_hooks_dir)" "all"
         install_all_agents
         ;;
@@ -129,6 +130,10 @@ case "$FIRERAVEN_AGENT" in
         _install_tree "$(devin_hooks_dir)" "devin"
         install_devin
         ;;
+    codex)
+        _install_tree "$(codex_hooks_dir)" "codex"
+        install_codex
+        ;;
     github-copilot)
         if [ "$FIRERAVEN_PROJECT_INSTALL" = "1" ]; then
             _install_tree "$(github_copilot_project_hooks_dir)" "github-copilot"
@@ -142,7 +147,7 @@ case "$FIRERAVEN_AGENT" in
         info "See adapters/copilot/ in the repository for Copilot Studio topics"
         ;;
     *)
-        error "Unknown --agent value: $FIRERAVEN_AGENT (use windsurf, cursor, claude, devin, github-copilot, copilot, all)"
+        error "Unknown --agent value: $FIRERAVEN_AGENT (use windsurf, cursor, claude, devin, codex, github-copilot, copilot, all)"
         ;;
 esac
 

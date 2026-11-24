@@ -135,6 +135,44 @@ def _run_merge_devin(path: Path, script_path: str, command: str = "") -> None:
     subprocess.run(args, check=True, cwd=REPO_ROOT)
 
 
+def _run_merge_codex(
+    path: Path,
+    script_path: str,
+    command: str = "",
+    command_windows: str = "",
+) -> None:
+    args = [
+        sys.executable,
+        str(SCRIPTS_DIR / "merge_hooks_config.py"),
+        "merge-codex",
+        "--path",
+        str(path),
+        "--script-path",
+        script_path,
+    ]
+    if command:
+        args.extend(["--command", command])
+    if command_windows:
+        args.extend(["--command-windows", command_windows])
+    subprocess.run(args, check=True, cwd=REPO_ROOT)
+
+
+def _run_scrub_codex(path: Path) -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "merge_hooks_config.py"),
+            "scrub-codex",
+            "--path",
+            str(path),
+            "--owned-pattern",
+            "codex_guardrail.py",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+
 def _run_scrub_claude(path: Path) -> None:
     subprocess.run(
         [
@@ -208,6 +246,20 @@ class MergeHooksConfigTests(unittest.TestCase):
         _run_merge_cursor(self.hooks_path, "/tmp/cursor_guardrail.py")
         second = json.loads(_strip_comments(self.hooks_path.read_text(encoding="utf-8")))
         self.assertEqual(first, second)
+
+    def test_creates_hooks_when_missing_on_existing_document(self) -> None:
+        self.hooks_path.write_text('{\n  "version": 1\n}\n', encoding="utf-8")
+        _run_merge_cursor(self.hooks_path, "/tmp/cursor_guardrail.py")
+        data = json.loads(_strip_comments(self.hooks_path.read_text(encoding="utf-8")))
+        self.assertEqual(data["version"], 1)
+        hooks = data["hooks"]
+        for event in CURSOR_EVENTS.split():
+            fireraven_entries = [
+                entry
+                for entry in hooks[event]
+                if "cursor_guardrail.py" in entry.get("command", "")
+            ]
+            self.assertEqual(len(fireraven_entries), 1, msg=event)
 
     def test_scrub_removes_fireraven_keeps_comments_and_rtk(self) -> None:
         _run_merge_cursor(self.hooks_path, "/tmp/cursor_guardrail.py")
@@ -376,6 +428,28 @@ class MergeClaudeHooksConfigTests(unittest.TestCase):
         self.assertEqual(len(data["hooks"]["UserPromptSubmit"]), 1)
         self.assertEqual(data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], command)
 
+    def test_creates_hooks_when_permissions_only(self) -> None:
+        script_path = "/home/user/.claude/hooks/claude_guardrail.py"
+        command = f"python3 {script_path}"
+        self.settings_path.write_text(
+            json.dumps(
+                {"permissions": {"allow": ["Bash(*)"]}},
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        _run_merge_claude(self.settings_path, script_path)
+
+        data = json.loads(_strip_comments(self.settings_path.read_text(encoding="utf-8")))
+        self.assertEqual(data["permissions"], {"allow": ["Bash(*)"]})
+        self.assertEqual(data["version"], 1)
+        hooks = data["hooks"]
+        self.assertEqual(hooks["PreToolUse"][0]["hooks"][0]["command"], command)
+        self.assertEqual(hooks["UserPromptSubmit"][0]["hooks"][0]["command"], command)
+        self.assertEqual(hooks["PostToolUse"][0]["hooks"][0]["command"], command)
+
 
 class MergeDevinHooksConfigTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -447,6 +521,83 @@ class MergeDevinHooksConfigTests(unittest.TestCase):
         self.assertEqual(
             data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
             fixed_command,
+        )
+
+
+class MergeCodexHooksConfigTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.mkdtemp()
+        self.hooks_path = Path(self.temp_dir) / "hooks.json"
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_registers_events_without_matcher(self) -> None:
+        script_path = "/home/user/.codex/hooks/fireraven/codex_guardrail.py"
+        command = f"python3 {script_path}"
+        _run_merge_codex(self.hooks_path, script_path)
+
+        data = json.loads(_strip_comments(self.hooks_path.read_text(encoding="utf-8")))
+        self.assertNotIn("version", data)
+        hooks = data["hooks"]
+        for event in ("PreToolUse", "UserPromptSubmit", "PostToolUse"):
+            self.assertEqual(len(hooks[event]), 1)
+            group = hooks[event][0]
+            self.assertNotIn("matcher", group)
+            handler = group["hooks"][0]
+            self.assertEqual(handler["command"], command)
+            self.assertEqual(handler["timeout"], 600)
+            self.assertTrue(handler["statusMessage"])
+            self.assertNotIn("commandWindows", handler)
+
+    def test_command_windows_and_preserves_session_start(self) -> None:
+        script_path = "C:/Users/test/.codex/hooks/fireraven/codex_guardrail.py"
+        command = f"py -3 {script_path}"
+        self.hooks_path.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "SessionStart": [
+                            {
+                                "hooks": [
+                                    {"type": "command", "command": "echo keep-session"}
+                                ]
+                            }
+                        ]
+                    }
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        _run_merge_codex(
+            self.hooks_path,
+            script_path,
+            command=command,
+            command_windows=command,
+        )
+        _run_merge_codex(
+            self.hooks_path,
+            script_path,
+            command=command,
+            command_windows=command,
+        )
+        data = json.loads(self.hooks_path.read_text(encoding="utf-8"))
+        self.assertEqual(data["hooks"]["SessionStart"][0]["hooks"][0]["command"], "echo keep-session")
+        self.assertEqual(len(data["hooks"]["PreToolUse"]), 1)
+        handler = data["hooks"]["PreToolUse"][0]["hooks"][0]
+        self.assertEqual(handler["command"], command)
+        self.assertEqual(handler["commandWindows"], command)
+
+        _run_scrub_codex(self.hooks_path)
+        scrubbed = json.loads(self.hooks_path.read_text(encoding="utf-8"))
+        self.assertNotIn("PreToolUse", scrubbed["hooks"])
+        self.assertNotIn("UserPromptSubmit", scrubbed["hooks"])
+        self.assertNotIn("PostToolUse", scrubbed["hooks"])
+        self.assertEqual(
+            scrubbed["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+            "echo keep-session",
         )
 
 

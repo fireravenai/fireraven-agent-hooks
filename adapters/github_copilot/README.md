@@ -1,25 +1,25 @@
 # GitHub Copilot Integration
 
-FireGuard guardrails for **GitHub Copilot CLI** and **Copilot cloud agent** via [shell hooks](https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/customize-cloud-agent/use-hooks).
+FireGuard guardrails for **GitHub Copilot CLI**, **VS Code Copilot Chat**, and **Copilot cloud agent** via [shell hooks](https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/customize-cloud-agent/use-hooks).
 
-> This is **GitHub Copilot** (CLI / cloud agent). For **Microsoft Copilot Studio**, see [adapters/copilot/README.md](../copilot/README.md).
+> This is **GitHub Copilot** (CLI, VS Code Copilot Chat, and cloud agent). For **Microsoft Copilot Studio**, see [adapters/copilot/README.md](../copilot/README.md).
 
 ## What this covers
 
 | Surface | Install target | Config file |
 |---------|----------------|-------------|
-| Copilot CLI | `./fg install --agent github-copilot` | `~/.copilot/hooks/fireraven-fireguard.json` |
+| Copilot CLI and VS Code Copilot Chat | `./fg install --agent github-copilot` | `~/.copilot/hooks/fireraven-fireguard.json` |
 | Copilot cloud agent | `./fg install --agent github-copilot --project` | `.github/hooks/fireraven-fireguard.json` |
 
 ## What this does not cover
 
 - VS Code inline completions or Tab suggestions
 - Microsoft Copilot Studio (use `--agent copilot` and [adapters/copilot/](../copilot/))
-- Prompt blocking — GitHub Copilot ignores `userPromptSubmitted` hook output; enforcement is on **tool calls** via `preToolUse`
+- Prompt blocking on Copilot CLI and the cloud agent — those hosts ignore `userPromptSubmitted` stdout. VS Code Copilot Chat does block that event.
 
 ## Quick install
 
-### User-level (Copilot CLI)
+### User-level (Copilot CLI and VS Code Copilot Chat)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fireravenai/fireraven-agent-hooks/refs/heads/main/install.sh | sh -s -- --agent github-copilot
@@ -71,17 +71,17 @@ FIRERAVEN_PROJECT_ID=your_project_id
 
 | Event | FireGuard action | Blocking? |
 |-------|------------------|-----------|
-| `userPromptSubmitted` | Input guardrail check | No — output is not processed by Copilot |
+| `userPromptSubmitted` / `UserPromptSubmit` | Input guardrail check | VS Code Copilot Chat: yes — `{"decision":"block","reason":"..."}`. CLI and cloud agent ignore stdout |
 | `preToolUse` | Input guardrail on tool call | Yes — OS dialog (CLI) then allow, or `permissionDecision: deny` |
 | `postToolUse` | Output audit on tool result | Audit only (stderr log if unsafe) |
 
-`preToolUse` is the primary enforcement point. Unlike Cursor, GitHub Copilot cannot block prompts via `userPromptSubmitted`.
+VS Code Copilot Chat blocks typed prompts, including PII, on `UserPromptSubmit`. The first successful check in a session prints `{"systemMessage":"Conversation secured by Fireraven"}`. Fail-open prints `systemMessage` once per session (`FireGuard unavailable`, `FireGuard not configured`, or `FireGuard: no credits left`). Copilot CLI and the cloud agent still cannot block prompts; `preToolUse` remains their enforcement point.
 
 ### Human override (CLI vs cloud)
 
 | Surface | Behavior |
 |---------|----------|
-| **Copilot CLI** (local desktop) | On overridable FireGuard policy/security violations, shows an OS Allow/Deny dialog (yad → zenity → kdialog on Linux). Allow continues once; Deny/unavailable keeps `permissionDecision: deny`. |
+| **Copilot CLI** (local desktop) | On FireGuard policy/security violations with response `override: true`, shows an OS Allow/Deny dialog (yad → zenity → kdialog on Linux). Allow continues once; Deny, `override: false`, or unavailable keeps `permissionDecision: deny`. |
 | **Copilot cloud agent** | No GUI — dialog is unavailable → hard deny with reason. |
 | Native `permissionDecision: "ask"` | **Not used** — unreliable / often only `deny` is processed for shell hooks. |
 
@@ -107,7 +107,7 @@ You do **not** need VS Code to validate the integration. Work through these step
 ### 2. Smoke-test the hook script (no Copilot required)
 
 ```bash
-# Allow: empty stdout, exit 0
+# Allow: first success in a session prints systemMessage; later success is empty stdout. Exit 0.
 echo '{"sessionId":"test","prompt":"hello"}' \
   | python3 ~/.copilot/hooks/fireraven/github_copilot_guardrail.py
 echo "exit: $?"
@@ -122,9 +122,10 @@ Expected outcomes:
 
 | Input | Allowed | Denied |
 |-------|---------|--------|
-| Prompt (`userPromptSubmitted`) | Empty stdout, exit 0 | Cannot block — audit only |
+| Prompt (`userPromptSubmitted`) | First success: `{"systemMessage":"Conversation secured by Fireraven"}`, exit 0. Later success: empty stdout, exit 0 | VS Code Copilot Chat: `{"decision":"block","reason":"..."}`, exit 0. CLI and cloud agent ignore this stdout |
 | Tool call (`preToolUse`) | Empty stdout, exit 0 | `{"permissionDecision":"deny",...}` on stdout, exit 0 |
 | Hook crash / missing config (`preToolUse`, fail-closed) | — | Non-zero exit (Copilot treats as deny) |
+| Prompt, fail-closed | — | `{"decision":"block","reason":"..."}`, exit 0 |
 
 ### 3. End-to-end with Copilot CLI
 

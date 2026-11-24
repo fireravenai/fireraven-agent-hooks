@@ -41,13 +41,15 @@ case "$agent" in
     all)
         copy_package_tree "$REPO_ROOT" "$(windsurf_hooks_dir)"
         _meta "$(windsurf_hooks_dir)" "all"
-        mkdir -p "$(cursor_hooks_dir)" "$(claude_hooks_dir)" "$(devin_hooks_dir)" "$(github_copilot_hooks_dir)"
+        mkdir -p "$(cursor_hooks_dir)" "$(claude_hooks_dir)" "$(devin_hooks_dir)" "$(codex_hooks_dir)" "$(github_copilot_hooks_dir)"
         copy_package_tree "$REPO_ROOT" "$(cursor_hooks_dir)"
         _meta "$(cursor_hooks_dir)" "all"
         copy_package_tree "$REPO_ROOT" "$(claude_hooks_dir)"
         _meta "$(claude_hooks_dir)" "all"
         copy_package_tree "$REPO_ROOT" "$(devin_hooks_dir)"
         _meta "$(devin_hooks_dir)" "all"
+        copy_package_tree "$REPO_ROOT" "$(codex_hooks_dir)"
+        _meta "$(codex_hooks_dir)" "all"
         copy_package_tree "$REPO_ROOT" "$(github_copilot_hooks_dir)"
         _meta "$(github_copilot_hooks_dir)" "all"
         install_all_agents
@@ -71,6 +73,11 @@ case "$agent" in
         copy_package_tree "$REPO_ROOT" "$(devin_hooks_dir)"
         _meta "$(devin_hooks_dir)" "devin"
         install_devin
+        ;;
+    codex)
+        copy_package_tree "$REPO_ROOT" "$(codex_hooks_dir)"
+        _meta "$(codex_hooks_dir)" "codex"
+        install_codex
         ;;
     github-copilot)
         if [ "$project_install" = "1" ]; then
